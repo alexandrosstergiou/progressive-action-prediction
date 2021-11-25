@@ -1,0 +1,683 @@
+'''
+---  I M P O R T  S T A T E M E N T S  ---
+'''
+import torch
+import os
+import json
+import gc
+import csv
+import time
+import coloredlogs, logging
+coloredlogs.install()
+import math
+from . import metric
+from . import callback
+
+
+'''
+===  S T A R T  O F  C L A S S  C S V W R I T E R ===
+
+    [About]
+
+        Class for creating a writer for the training and validations scores and saving them to .csv
+
+    [Init Args]
+
+        - filename: String for the name of the file to save to. Will create the file or erase any
+        previous versions of it.
+
+    [Methods]
+
+        - __init__ : Class initialiser
+        - close : Function for closing the file.
+        - write : Function for writing new elements along in a new row.
+        - size : Function for getting the size of the file.
+        - fname : Function for returning the filename.
+
+'''
+class CSVWriter():
+
+    filename = None
+    fp = None
+    writer = None
+
+    def __init__(self, filename):
+        self.filename = filename
+        self.fp = open(self.filename, 'a', encoding='utf8')
+        self.writer = csv.writer(self.fp, delimiter=';', quotechar='"', quoting=csv.QUOTE_ALL, lineterminator='\n')
+
+    def close(self):
+        self.fp.close()
+
+    def write(self, elems):
+        self.writer.writerow(elems)
+
+    def size(self):
+        return os.path.getsize(self.filename)
+
+    def fname(self):
+        return self.filename
+'''
+===  E N D  O F  C L A S S  C S V W R I T E R ===
+'''
+
+
+'''
+===  S T A R T  O F  C L A S S  S T A T I C M O D E L ===
+
+    [About]
+
+        Class responsible for the main functionality during training. Provides function implementations
+        for loading a previous model state, create a checkpoint filepath, loading a checkpoint, saving model
+        based on the checkpoint path created as well as preform a full forward pass returning the output
+        class probabilities and loss(es).
+
+    [Init Args]
+
+        - net: nn.Module containing the full architecture.
+        - criterion : nn.Module that specifies the loss criterion (e.g. CrossEntropyLoss). Could also
+        include custom losses.
+        - model_prefix : String for the prefix to be used when loading a previous state.
+
+    [Methods]
+
+        - __init__ : Class initialiser
+        - load_state :
+        - load_checkpoint :
+        - save_checkpoint :
+        - forward :
+
+'''
+class static_model(object):
+
+    def __init__(self,
+                 net,
+                 criterion=None,
+                 model_prefix='',
+                 **kwargs):
+        if kwargs:
+            logging.warning("Unknown kwargs: {}".format(kwargs))
+
+        # parameter initialisation
+        self.net = net
+        self.model_prefix = model_prefix
+        self.criterion = criterion
+
+    def load_state(self, state_dict, strict=False):
+        # Strict mode that structure should match exactly
+        if strict:
+            self.net.load_state_dict(state_dict=state_dict)
+        else:
+            # Iteration over both state dicts
+            n_state_dict_keys = list(self.net.state_dict().keys())
+            for f_name, f_param in state_dict.items():
+                for n_name, n_param in self.net.state_dict().items():
+                    # Remove module, model, head and backbone from keys on both state dicts
+                    f_name_trim = f_name.replace('module.','')
+                    n_name_trim = n_name.replace('module.','')
+                    f_name_trim = f_name_trim.replace('model.','')
+                    n_name_trim = n_name_trim.replace('model.','')
+                    f_name_trim = f_name_trim.replace('backbone.','')
+                    n_name_trim = n_name_trim.replace('backbone.','')
+                    f_name_trim = f_name_trim.replace('head.','')
+                    n_name_trim = n_name_trim.replace('head.','')
+                    # Check if file param name does match (as a sub-string) to the network param
+                    if f_name_trim in n_name_trim:
+                        # Check if the shape of the parameters also match
+                        if f_param.shape == n_param.shape:
+                            self.net.state_dict()[n_name].copy_(f_param.view(n_param.shape))
+                            n_state_dict_keys.remove(n_name)
+
+            # indicating missed keys
+            if n_state_dict_keys:
+                logging.warning(">> The following keys were not loaded: {}".format(n_state_dict_keys))
+                return False
+
+        return True
+
+    def load_checkpoint(self, epoch, path, optimiser=None):
+        # model prefix needs to be defined for creating the checkpoint path
+        assert self.model_prefix, "Undefined `model_prefix`"
+        # check that file path exists
+        assert os.path.exists(path), logging.warning("Failed to locate model weights path: `{}'".format(path))
+        # checkpoint loading
+        checkpoint = torch.load(path)
+
+         # Try to load `load_state` for `self.net` first
+         all_params_loaded = self.load_state(checkpoint['state_dict'], strict=False)
+
+        # Optimiser handling
+        if optimiser:
+            if 'optimizer' in checkpoint.keys() and all_params_loaded:
+                optimiser.load_state_dict(checkpoint['optimizer'])
+                logging.info("Model & Optimiser states are resumed from: `{}'".format(load_path))
+            else:
+                logging.warning("Did not load optimiser state from: `{}'".format(load_path))
+        else:
+            logging.info("Only model state resumed from: `{}'".format(load_path))
+
+        if 'epoch' in checkpoint.keys():
+            if checkpoint['epoch'] != epoch:
+                logging.warning("Epoch information inconsistant: {} vs {}".format(checkpoint['epoch'], epoch))
+
+
+
+    def save_checkpoint(self, epoch, base_directory, optimiser_state=None):
+
+        # Create save path
+        save_path = os.path.join(base_directory,'{}_ep-{:04d}.pth'.format(base_directory.split('/')[-1],epoch))
+
+        # Create directory if path does not exist
+        if not os.path.exists(base_directory):
+            logging.debug("mkdir {}".format(base_directory))
+            os.makedirs(base_directory)
+
+        # Create optimiser state if it does not exist. Use the `epoch` and `state_dict`
+        state_dict = self.net.get_state_dict()
+
+        # Check if `backbone_optimiser_state` is not None
+        if optimiser_state is None:
+            torch.save({'epoch': epoch,
+                        'state_dict': state_dict},
+                        save_path)
+            logging.debug("Checkpoint (only model) saved to: {}".format(save_path))
+        else:
+            torch.save({'epoch': epoch,
+                        'state_dict': state_dict,
+                        'optimizer': optimiser_state},
+                        save_path)
+            logging.debug("Checkpoint (model & optimiser) saved to: {}".format(save_path))
+
+
+    def forward(self, data, target, percision):
+        # Data conversion
+        if percision=='mixed':
+            data = data.half().cuda()
+        else:
+            data =  data.float().cuda()
+        target = target.cuda()
+
+        # Forward for training/evaluation
+        if self.net.training:
+            if percision=='mixed':
+                with torch.cuda.amp.autocast():
+                    output = self.net(data)
+            else:
+                output = self.net(data)
+        else:
+            with torch.no_grad():
+                if percision=='mixed':
+                    with torch.cuda.amp.autocast():
+                        output = self.net(data)
+                else:
+                    output = self.net(data)
+        # Use (loss) criterion if specified
+        if hasattr(self, 'criterion') and self.criterion is not None and target is not None:
+            loss = self.criterion(output, target)
+        else:
+            loss = None
+        return output, loss
+'''
+===  E N D  O F  C L A S S  S T A T I C M O D E L ===
+'''
+
+
+'''
+===  S T A R T  O F  C L A S S  M O D E L ===
+
+    [About]
+
+        Class for performing the main dataloading and weight updates. Train functionality happens here.
+
+    [Init Args]
+
+        - net: nn.Module containing the full architecture.
+        - criterion : nn.Module that specifies the loss criterion (e.g. CrossEntropyLoss). Could also
+        include custom losses.
+        - model_prefix : String for the prefix to be used when loading a previous state.
+        - step_callback: CallbackList for including all Callbacks created.
+        - step_callback_freq: Frequency based on which the Callbacks are updates (and values are logged).
+        - save_checkpoint_freq: Integer for the frequency based on which the model is to be saved.
+        - opt_batch_size: Integer defines the original batch size to be used.
+
+
+    [Methods]
+
+        - __init__ : Class initialiser
+        - step_end_callback: Function for updating the Callbacks list at the end of each iteration step. In the case of validation,
+        this function is called at the end of evaluating.
+        - epoch_end_callback: Function for updating the Callbacks at the end of each epoch.
+        - adjust_learning_rate: Function for adjusting the learning rate based on the iteration/epoch. Primarily used for circles.
+        - fit: Main training loop. Performs both training and evaluation.
+
+'''
+class model(static_model):
+
+    def __init__(self,
+                 net,
+                 criterion,
+                 model_prefix='',
+                 step_callback=None,
+                 step_callback_freq=50,
+                 save_checkpoint_freq=1,
+                 **kwargs):
+
+        # load parameters
+        if kwargs:
+            logging.warning("Unknown kwargs: {}".format(kwargs))
+
+        super(model, self).__init__(net, criterion=criterion,
+                                         model_prefix=model_prefix)
+
+        # load optional arguments
+        # - callbacks
+        self.callback_kwargs = {'epoch': None,
+                                'batch': None,
+                                'read_elapse': None,
+                                'forward_elapse': None,
+                                'backward_elapse': None,
+                                'epoch_elapse': None,
+                                'namevals': None,
+                                'optimiser_dict': None,}
+
+        if not step_callback:
+            step_callback = callback.CallbackList(callback.SpeedMonitor(),
+                                                  callback.MetricPrinter())
+
+        self.step_callback = step_callback
+        self.step_callback_freq = step_callback_freq
+        self.save_checkpoint_freq = save_checkpoint_freq
+
+
+    def step_end_callback(self):
+        # logging.debug("Step {} finished!".format(self.i_step))
+        self.step_callback(**(self.callback_kwargs))
+
+    def epoch_end_callback(self,results_directory):
+        if self.callback_kwargs['epoch_elapse'] is not None:
+            # Main logging definition
+            logging.info("Epoch [{:d}]   time cost: {:.2f} sec ({:.2f} h)".format(
+                    self.callback_kwargs['epoch'],
+                    self.callback_kwargs['epoch_elapse'],
+                    self.callback_kwargs['epoch_elapse']/3600.))
+        if self.callback_kwargs['epoch'] == 0 \
+           or ((self.callback_kwargs['epoch']+1) % self.save_checkpoint_freq) == 0:
+            self.save_checkpoint(epoch=self.callback_kwargs['epoch']+1,
+                                 optimiser_state=self.callback_kwargs['optimiser_dict'],
+                                 base_directory=results_directory)
+
+
+    def adjust_learning_rate(self, lr, optimiser):
+        # learning rate adjustment based on provided lr rate
+        for param_group in optimiser.param_groups:
+            if 'lr_mult' in param_group:
+                lr_mult = param_group['lr_mult']
+            else:
+                lr_mult = 1.0
+            param_group['lr'] = lr * lr_mult
+
+
+    def fit(self, train_iter, optimiser, lr_scheduler, long_short_steps_dir,
+            no_cycles,
+            eval_iter=None,
+            batch_shape=(24,16,224,224),
+            workers=4,
+            metrics=metric.Accuracy(topk=1),
+            iter_per_epoch=1000,
+            epoch_start=0,
+            epoch_end=10000,
+            directory=None,
+            **kwargs):
+
+        # Check kwargs used
+        if kwargs:
+            logging.warning("Unknown kwargs: {}".format(kwargs))
+
+        assert torch.cuda.is_available(), "only support GPU version"
+        torch.autograd.set_detect_anomaly(True)
+
+        pause_sec = 0.
+        train_loaders = {}
+        active_batches = {}
+
+        workers= 4
+        n_workers = workers
+
+        # Create files to write results to
+        if (directory is not None):
+            train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)),'w')
+        else:
+            train_file = open('./train_results_s{0:04d}.csv'.format(epoch_start),'w')
+        train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+        train_writer.writeheader()
+
+        if (directory is not None):
+            val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)),'w')
+        else:
+            val_file = open('./val_resultss{0:04d}.csv'.format(epoch_start),'w')
+        val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+        val_writer.writeheader()
+        #val_writer = csv.writer(f_val, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+
+        cycles = True
+
+        for i_epoch in range(epoch_start, epoch_end):
+
+
+            if (no_cycles):
+                logging.info('No cycles selected')
+                train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=batch_shape[0], shuffle=True,num_workers=n_workers, pin_memory=False))
+                cycles = False
+
+            self.callback_kwargs['epoch'] = i_epoch
+            epoch_start_time = time.time()
+
+
+            # values for writing average topk,loss in epoch
+            train_top1_sum = []
+            train_top5_sum = []
+            train_loss_sum = []
+            val_top1_sum = []
+            val_top5_sum = []
+            val_loss_sum = []
+
+            # Reset all metrics
+            metrics.reset()
+            # change network `mode` to training to ensure weight updates.
+            self.net.train()
+            # Time variable definitions
+            sum_sample_inst = 0
+            sum_read_elapse = 0.
+            sum_forward_elapse = 0
+            sum_backward_elapse = 0
+            epoch_speeds = [0,0,0]
+            batch_start_time = time.time()
+            logging.debug("Start epoch {:d}:".format(i_epoch))
+            for i_batch in range(iter_per_epoch):
+                if (i_batch % 50 == 0):time.sleep(5)
+
+                b = batch_shape[0]
+                t = batch_shape[1]
+                h = batch_shape[2]
+                w = batch_shape[3]
+
+                selection = ''
+
+                loader_id = 0
+                # Increment long cycle steps (8*B).
+                if i_batch in long_short_steps_dir['long_0']:
+                    b = 8 * b
+                    t = t//4
+                    h = int(h//math.sqrt(2))
+                    w = int(w//math.sqrt(2))
+
+                # Increment long cycle steps (4*B).
+                elif i_batch in long_short_steps_dir['long_1']:
+                    b = 4 * b
+                    t = t//2
+                    h = int(h//math.sqrt(2))
+                    w = int(w//math.sqrt(2))
+
+                # Increment long cycle steps (2*B).
+                elif i_batch in long_short_steps_dir['long_2']:
+                    b = 2 * b
+                    t = t//2
+
+                # Increment short cycle steps (2*b).
+                if i_batch in long_short_steps_dir['short_1']:
+                    loader_id = 1
+                    b = 2 * b
+                    h = int(h//math.sqrt(2))
+                    w = int(w//math.sqrt(2))
+
+                # Increment short cycle steps (4*b).
+                elif i_batch in long_short_steps_dir['short_2']:
+                    loader_id = 2
+                    b = 4 * b
+                    h = h//2
+                    w = w//2
+
+                if (h%2 != 0): h+=1
+                if (w%2 != 0): w+=1
+
+                #if (b>1000):
+                #    n_workers = workers + 4
+                #elif (b>100):
+                #    n_workers = workers + 2
+
+
+                if cycles:
+                    train_iter.size_setter(new_size=(t,h,w))
+
+                    batch_s = (t,h,w)
+                    if (batch_s not in active_batches.values()):
+                        logging.info('Creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
+                        # Ensure rendomisation
+                        train_iter.shuffle(i_epoch+i_batch)
+                        # create dataloader corresponding to the created dataset.
+                        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False)
+                        if loader_id in train_loaders:
+                            del train_loaders[loader_id]
+                        train_loaders[loader_id]=iter(train_loader)
+                        if loader_id in active_batches:
+                            del active_batches[loader_id]
+                        active_batches[loader_id]=batch_s
+                        gc.collect()
+
+
+                    try:
+                        gc.collect()
+                        sum_read_elapse = time.time()
+                        data,target,_ = next(train_loaders[loader_id])
+                        sum_read_elapse = time.time() - sum_read_elapse
+                    except Exception as e:
+                        logging.warning(e)
+                        # Reinitialise if used up
+                        logging.warning('Re-creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
+                        # Ensure rendomisation
+                        train_iter.shuffle(i_epoch+i_batch)
+                        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False)
+
+                        if loader_id in train_loaders:
+                            del train_loaders[loader_id]
+                        train_loaders[loader_id]=iter(train_loader)
+                        if loader_id in active_batches:
+                            del active_batches[loader_id]
+                        active_batches[loader_id]=batch_s
+                        gc.collect()
+                        sum_read_elapse = time.time()
+                        data,target,_ = next(train_loaders[loader_id])
+                        sum_read_elapse = time.time() - sum_read_elapse
+
+
+                    gc.collect()
+                else:
+                    sum_read_elapse = time.time()
+                    data,target,_ = next(train_loader)
+                    sum_read_elapse = time.time() - sum_read_elapse
+
+                self.callback_kwargs['batch'] = i_batch
+
+                # Catch Segmentation fault errors and nan grads
+                while True:
+                    forward = False
+                    backward = False
+                    try:
+                        # [forward] making next step
+                        torch.cuda.empty_cache()
+                        sum_forward_elapse = time.time()
+                        outputs, losses = self.forward(data, target)
+                        sum_forward_elapse = time.time() - sum_forward_elapse
+                        forward = True
+
+                        # [backward]
+                        optimiser.zero_grad()
+                        sum_backward_elapse = time.time()
+                        for loss in losses:
+                            with amp.scale_loss(loss, optimiser) as scaled_loss:
+                                scaled_loss.backward()
+                            #loss.backward()
+                        sum_backward_elapse = time.time() - sum_backward_elapse
+                        lr = lr_scheduler.update()
+                        batch_size = tuple(data.size())
+                        self.adjust_learning_rate(optimiser=optimiser,lr=lr)
+                        optimiser.step()
+
+                        backward = True
+                        break
+
+                    except Exception as e:
+                        # Create new data loader in the (rare) case of segmentation fault
+                        # Or nan loss
+                        logging.info(e)
+                        logging.warning('Error in forward/backward: forward executed: {} , backward executed: {}'.format(forward,backward))
+                        logging.warning('Creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
+                        train_iter.shuffle(i_epoch+i_batch+int(time.time()))
+
+                        if loader_id in train_loaders:
+                            del train_loaders[loader_id]
+                        if loader_id in active_batches:
+                            del active_batches[loader_id]
+                        if loss in locals():
+                            del loss
+
+                        gc.collect()
+                        optimiser.zero_grad()
+                        torch.cuda.empty_cache()
+                        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False)
+                        train_loaders[loader_id]=iter(train_loader)
+                        active_batches[loader_id]=batch_s
+                        sum_read_elapse = time.time()
+                        data,target,_ = next(train_loaders[loader_id])
+                        sum_read_elapse = time.time() - sum_read_elapse
+                        gc.collect()
+
+                # [evaluation] update train metric
+                metrics.update([output.data.cpu() for output in outputs],
+                               target.cpu(),
+                               [loss.data.cpu() for loss in losses],
+                               lr,
+                               batch_size)
+
+                # Append matrices to lists
+                m = metrics.get_name_value()
+                train_top1_sum.append(m[1][0][1])
+                train_top5_sum.append(m[2][0][1])
+                train_loss_sum.append(m[0][0][1])
+
+
+                # timing each batch
+                epoch_speeds += [sum_read_elapse,sum_forward_elapse,sum_backward_elapse]
+                sum_sample_inst += data.shape[0]
+
+                if (i_batch % self.step_callback_freq) == 0:
+                    # retrive eval results and reset metic
+                    self.callback_kwargs['namevals'] = metrics.get_name_value()
+                    metrics.reset()
+                    # speed monitor
+                    self.callback_kwargs['read_elapse'] = sum_read_elapse / data.shape[0]
+                    self.callback_kwargs['forward_elapse'] = sum_forward_elapse / data.shape[0]
+                    self.callback_kwargs['backward_elapse'] = sum_backward_elapse / data.shape[0]
+                    sum_read_elapse = 0.
+                    sum_forward_elapse = 0.
+                    sum_backward_elapse = 0.
+                    sum_sample_inst = 0.
+                    # callbacks
+                    self.step_end_callback()
+
+            # Epoch end
+            self.callback_kwargs['epoch_elapse'] = time.time() - epoch_start_time
+            self.callback_kwargs['optimiser_dict'] = optimiser.state_dict()
+            self.epoch_end_callback(directory)
+            train_loaders = {}
+            active_batches = {}
+
+            l = len(train_top1_sum)
+            train_top1_sum = sum(train_top1_sum)/l
+            train_top5_sum = sum(train_top5_sum)/l
+            train_loss_sum = sum(train_loss_sum)/l
+            train_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(train_top1_sum), 'Top5':str(train_top5_sum),'Loss':str(train_loss_sum)})
+            logging.info('Epoch [{:d}]  (train)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss: {:.5f}'.format(i_epoch,train_top1_sum,train_top5_sum,train_loss_sum))
+
+            # Evaluation happens here
+            if (eval_iter is not None) and ((i_epoch+1) % max(1, int(self.save_checkpoint_freq/2))) == 0:
+                logging.info("Start evaluating epoch {:d}:".format(i_epoch))
+                metrics.reset()
+                self.net.eval()
+                sum_read_elapse = time.time()
+                sum_forward_elapse = 0.
+                sum_sample_inst = 0
+                #accurac_dict = {} # (!!!) In order to use a per-class accuracy ensure that the batch size is 1
+
+                for i_batch, (data, target, path) in enumerate(eval_iter):
+
+                    sum_read_elapse = time.time()
+                    self.callback_kwargs['batch'] = i_batch
+                    sum_forward_elapse = time.time()
+
+                    # [forward] making next step
+                    torch.cuda.empty_cache()
+                    outputs, losses = self.forward(data, target)
+
+                    sum_forward_elapse = time.time() - sum_forward_elapse
+
+
+                    metrics.update([output.data.cpu() for output in outputs],
+                                    target.cpu(),
+                                   [loss.data.cpu() for loss in losses])
+
+                    m = metrics.get_name_value()
+
+                    # Append rates
+                    '''
+                    label = path[0].split('/')[-2]
+                    if label in accurac_dict:
+                        accurac_dict[label]['acc'] += m[1][0][1]
+                        accurac_dict[label]['num'] += 1
+                    else:
+                        accurac_dict[label] = {'acc':m[1][0][1] , 'num':1}
+                    '''
+
+
+                    val_top1_sum.append(m[1][0][1])
+                    val_top5_sum.append(m[2][0][1])
+                    val_loss_sum.append(m[0][0][1])
+
+
+                    sum_sample_inst += data.shape[0]
+
+                    if (i_batch%50 == 0):
+                        val_top1_avg = sum(val_top1_sum)/(i_batch+1)
+                        val_top5_avg = sum(val_top5_sum)/(i_batch+1)
+                        val_loss_avg = sum(val_loss_sum)/(i_batch+1)
+                        logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
+
+                #for label in accurac_dict.keys():
+                #    accurac_dict[label]['acc'] /= accurac_dict[label]['num']
+                    #logging.info(label +' accuracy: '+str(accurac_dict[label]['acc']))
+
+                # Save to dictionary
+                #with open(os.path.join(directory,'class_accuracies_ep{:04d}.json'.format(i_epoch)), 'w') as jsonf:
+                #    json.dump(accurac_dict, jsonf)
+
+                # evaluation callbacks
+                self.callback_kwargs['read_elapse'] = sum_read_elapse / data.shape[0]
+                self.callback_kwargs['forward_elapse'] = sum_forward_elapse / data.shape[0]
+                self.callback_kwargs['namevals'] = metrics.get_name_value()
+                self.step_end_callback()
+
+                l = len(val_top1_sum)
+                val_top1_sum = sum(val_top1_sum)/l
+                val_top5_sum = sum(val_top5_sum)/l
+                val_loss_sum = sum(val_loss_sum)/l
+                val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_sum), 'Top5':str(val_top5_sum),'Loss':str(val_loss_sum)})
+                logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_sum,val_top5_sum,val_loss_sum))
+
+
+        logging.info("--- Finished ---")
+        train_writer.close()
+        val_writer.close()
+'''
+===  E N D  O F  C L A S S  M O D E L ===
+'''
