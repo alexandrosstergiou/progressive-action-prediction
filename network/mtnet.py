@@ -391,7 +391,7 @@ class BasicStem(nn.Sequential):
 class MTNet(nn.Module):
 
     def __init__(self, block, layers, num_classes=400, groups=1, width_per_group=64,
-                 zero_init_residual=False, r=.875, return_acts=False):
+                 zero_init_residual=False, r=.875, return_acts=False, **kwargs):
 
         super(MTNet, self).__init__()
         self.inplanes = 64
@@ -545,6 +545,7 @@ def MTNet_l_g8(**kwargs):
 
 
 if __name__ == "__main__":
+    '''
     batch = 32
     tmp = torch.rand(batch,3,14,224,224).cuda().half()
     target = torch.zeros(batch).uniform_(0., 9.).long().cuda()
@@ -556,7 +557,15 @@ if __name__ == "__main__":
         loss = criterion(out,target)
         scaler.scale(loss).backward()
     print('Test completed successfully. Final acts shape:',out.shape,acts.shape)
-
+    '''
     from torchinfo import summary
-    net = MTNet_s(num_classes=200, return_acts=False).cuda()
-    summary(net, (32,3,16,184,184))
+    net = MTNet_s(num_classes=200, return_acts=True)
+    tmps = [torch.randn(32,3,16,258,258),
+            torch.randn(32,3,16,224,224),
+            torch.randn(32,3,16,182,182),
+            torch.randn(32,3,16,126,126),
+            torch.randn(32,3,16,88,88)]
+    for tmp in tmps:
+        with torch.no_grad():
+            _,out = net(tmp)
+        print(tmp.shape,'->',out.shape)

@@ -8,8 +8,6 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Reduce, Rearrange
 
-import adapool_cuda
-from adaPool import empool1d, idwpool1d, edscwpool1d, AdaPool1d
 
 # helpers
 
@@ -245,7 +243,7 @@ class TemPer_h(nn.Module):
         fourier_encode_data = True,
         self_per_cross_attn = 1,
         final_classifier_head = True,
-        pool = nn.AdaptiveAvgPool1d((1))
+        **kwargs
     ):
         """The shape of the final attention mechanism will be:
         depth * (cross attention -> self_per_cross_attn * self attention)
@@ -325,10 +323,6 @@ class TemPer_h(nn.Module):
         ) if final_classifier_head else nn.Identity()
 
         self.fc = nn.Linear(latent_dim, self.num_classes) if final_classifier_head else nn.Identity()
-        self.pred_fusion = nn.Sequential(
-                             Rearrange('b s c -> b c s'),
-                             pool,
-                             Rearrange('b c 1 -> b c')) if pool is not None else None
 
 
     def forward(self, data, mask = None, return_embeddings = False):
@@ -383,9 +377,6 @@ class TemPer_h(nn.Module):
 
         # class predictions
         pred = self.fc(x)
-        # class prediction sampling
-        if self.pred_fusion is not None:
-            pred = self.pred_fusion(pred)
         # used for fetching embeddings
         if return_embeddings:
             return pred, x

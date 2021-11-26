@@ -28,6 +28,14 @@ class Callback(object):
 
     def __init__(self, with_header=False):
         self.with_header = with_header
+        self.total_batches = 0
+        self.total_epochs = 0
+
+    def set_tot_epochs(self, new_num):
+        self.total_epochs = new_num
+
+    def set_tot_batches(self, new_num):
+        self.total_batches =  new_num
 
     def __call__(self):
         raise NotImplementedError('Must be implemented in child classes!')
@@ -36,9 +44,9 @@ class Callback(object):
         str_out = ""
         if self.with_header:
             if epoch is not None:
-                str_out += "Epoch {:s} ".format(("[%d]"%epoch).ljust(5, ' '))
+                str_out += "Epoch {:s} ".format(("[%d / %d]"%(epoch,self.total_epochs)).ljust(5, ' '))
             if batch is not None:
-                str_out += "Batch {:s} ".format(("[%d]"%batch).ljust(6, ' '))
+                str_out += "Batch {:s} ".format(("[%d / %d]"%(batch,self.total_batches)).ljust(6, ' '))
         return str_out
 '''
 ===  E N D  O F  C L A S S  C A L L B A C K ===

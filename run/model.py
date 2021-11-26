@@ -96,7 +96,7 @@ class static_model(object):
                  model_prefix='',
                  **kwargs):
         if kwargs:
-            logging.warning("Unknown kwargs: {}".format(kwargs))
+            logging.warning("Initialiser:: Unknown kwargs: {}".format(kwargs))
 
         # parameter initialisation
         self.net = net
@@ -130,36 +130,39 @@ class static_model(object):
 
             # indicating missed keys
             if n_state_dict_keys:
-                logging.warning(">> The following keys were not loaded: {}".format(n_state_dict_keys))
+                logging.warning("Initialiser:: The following keys were not loaded: {}".format(n_state_dict_keys))
                 return False
 
         return True
 
-    def load_checkpoint(self, epoch, path, optimiser=None):
+    def load_checkpoint(self, path, epoch=None, optimiser=None):
         # model prefix needs to be defined for creating the checkpoint path
         assert self.model_prefix, "Undefined `model_prefix`"
         # check that file path exists
-        assert os.path.exists(path), logging.warning("Failed to locate model weights path: `{}'".format(path))
+        assert os.path.exists(path), logging.warning("Initialiser:: Failed to locate model weights path: `{}'".format(path))
         # checkpoint loading
         checkpoint = torch.load(path)
 
-         # Try to load `load_state` for `self.net` first
-         all_params_loaded = self.load_state(checkpoint['state_dict'], strict=False)
+        # Try to load `load_state` for `self.net` first
+        all_params_loaded = self.load_state(checkpoint['state_dict'], strict=False)
 
         # Optimiser handling
         if optimiser:
             if 'optimizer' in checkpoint.keys() and all_params_loaded:
                 optimiser.load_state_dict(checkpoint['optimizer'])
-                logging.info("Model & Optimiser states are resumed from: `{}'".format(load_path))
+                logging.info("Initialiser::  Model & Optimiser states are resumed from: `{}'".format(load_path))
             else:
-                logging.warning("Did not load optimiser state from: `{}'".format(load_path))
+                logging.warning("Initialiser:: Did not load optimiser state from: `{}'".format(load_path))
         else:
-            logging.info("Only model state resumed from: `{}'".format(load_path))
+            logging.info("Initialiser:: Only model state resumed from: `{}'".format(load_path))
 
-        if 'epoch' in checkpoint.keys():
-            if checkpoint['epoch'] != epoch:
-                logging.warning("Epoch information inconsistant: {} vs {}".format(checkpoint['epoch'], epoch))
-
+        if epoch is not None:
+            if 'epoch' in checkpoint.keys():
+                logging.info("Initialiser:: Epoch number updated from: {} vs {}".format(epoch, checkpoint['epoch']))
+                epoch = checkpoint['epoch']
+            else:
+                logging.warning("Initialiser:: Unable to find epoch information in `state_dict` of the file provided, defaulting to value {}. If fine-tuning, you can specify this manually instead.".format(epoch))
+        return epoch, optimiser
 
 
     def save_checkpoint(self, epoch, base_directory, optimiser_state=None):
@@ -361,6 +364,9 @@ class model(static_model):
 
 
         cycles = True
+
+        self.step_callback.set_tot_epochs(epoch_end)
+        self.step_callback.set_tot_batches(iter_per_epoch)
 
         for i_epoch in range(epoch_start, epoch_end):
 

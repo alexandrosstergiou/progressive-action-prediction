@@ -11,17 +11,42 @@ from .temper_h import TemPer_h
 
 from .config import get_config
 
-from .torchinfo import summary
-
 import torch
 import torch.nn.parallel
 import torch.nn.functional as F
 
 from einops import reduce, rearrange
+from einops.layers.torch import Reduce, Rearrange
+
+from ptflops import get_model_complexity_info
+from torchinfo import summary
 
 
-import adapool_cuda
-from adaPool import IDWPool1d, EMPool1d, EDSCWPoll1d, AdaPool1d
+#import adapool_cuda
+#from adaPool import IDWPool1d, EMPool1d, EDSCWPool1d, AdaPool1d
+
+
+def beautify_net(net):
+    converted = []
+    net_string = str(net)
+    for name, layer in net.named_modules():
+        names = name.split('.')
+        layer_n = str(type(layer).__name__)
+
+        if layer_n not in converted:
+            converted.append(layer_n)
+            new_ln = '\033[34m' + layer_n + '\033[0m'
+            net_string = net_string.replace(layer_n, new_ln)
+
+        for n in names:
+            if n not in converted:
+                converted.append(n)
+                new_n = '\033[35m' + n + '\033[0m'
+                net_string = net_string.replace('('+n+')', '('+new_n+')')
+    # beautify for readability
+    print(net_string)
+
+
 
 '''
 ---  S T A R T  O F  F U N C T I O N  G E T _ S Y M B O L ---
@@ -36,7 +61,7 @@ from adaPool import IDWPool1d, EMPool1d, EDSCWPoll1d, AdaPool1d
         - config: Dictionary that includes a `mean` and `std` terms spcifying the mean and standard deviation.
                   See `network/config.py` for more info.
 '''
-def get_symbol(name, print_net=False, samplers=4, pool=None, headless=False, **kwargs):
+def get_symbol(name, samplers=4, pool=None, headless=False, **kwargs):
 
     # TemPer_h
     if ('TEMPER' in name.upper()):
@@ -161,63 +186,72 @@ def get_symbol(name, print_net=False, samplers=4, pool=None, headless=False, **k
         logging.error("network '{}'' not implemented".format(name))
         raise NotImplementedError()
 
-    if print_net:
-        b_stats = summary(net, (1, 3, 8, 122, 122), verbose=0)
-        b_sum_str = str(b_stats)
-
-        logging.info("Symbol:: Network Architecture:")
-        logging.info(b_sum_str)
-
     return net
 '''
 ---  E N D  O F  F U N C T I O N  G E T _ S Y M B O L ---
 '''
 
-def get_pooling(name, samplers)
-    if name.upper == 'AVG':
-        pool = nn.AdaptiveAvgPool1d((1))
-    elif name.upper == 'MAX':
-        pool = nn.AdaptiveMaxPool1d((1))
-    elif name.upper == 'EM':
+def get_pooling(name, samplers):
+    if name.upper() == 'AVG':
+        pool = torch.nn.AdaptiveAvgPool1d((1))
+    elif name.upper() == 'MAX':
+        pool = torch.nn.AdaptiveMaxPool1d((1))
+        '''
+    elif name.upper() == 'EM':
         pool = EMPool1d(kernel_size=(num_samplers))
-    elif name.upper == 'EDSCW':
+    elif name.upper() == 'EDSCW':
         pool = EDSCWPoll1d(kernel_size=(num_samplers))
-    elif name.upper == 'IDW':
+    elif name.upper() == 'IDW':
         pool = IDWPool1d(kernel_size=(num_samplers))
-    elif nam.upper == 'ADA':
+    elif name.upper() == 'ADA':
         pool = AdaPool1d(kernel_size=(num_samplers), beta=(1))
+        '''
     else:
         logging.error("Pooling method '{}'' not implemented".format(name))
         raise NotImplementedError()
     return pool
 
 
-class Combined(nn.Module):
+class Combined(torch.nn.Module):
     def __init__(self,
                  backbone,
                  head=None,
                  pool=None,
                  print_net=False,
                  num_samplers=4,
-                 t_dim=16,
                  **kwargs):
         super(Combined, self).__init__()
 
         assert num_samplers >= 1, 'Cannot create model with `num_samplers` being less than 1!'
         self.samplers = num_samplers
-        self.t_dim = t_dim
 
         # Get backbone model, input configuration, head model and pooling method
-        self.backbone = get_symbol(backbone, print_net=print_net, samplers=self.samplers, headless =True, **kwargs)
+        self.backbone = get_symbol(backbone, samplers=self.samplers, headless =True, **kwargs)
         self.backbone.requires_grad_(False)
 
         if pool is not None:
             pool = get_pooling(pool, samplers=self.samplers)
+            self.pred_fusion = torch.nn.Sequential(
+                                 Rearrange('b s c -> b c s'),
+                                 pool,
+                                 Rearrange('b c 1 -> b c')) if pool is not None else None
+        else:
+            self.pred_fusion = None
 
         if (head is not None):
-            self.head, _ = get_symbol(head, print_net=print_net, samplers=self.samplers, pool=pool, **kwargs)
+            self.head = get_symbol(head, samplers=self.samplers, **kwargs)
 
-    def forward(x):
+        # model printing
+        converted = []
+        ks = []
+
+        if print_net:
+            beautify_net(self.backbone)
+            if self.head is not None:
+                beautify_net(self.head)
+
+
+    def forward(self,x):
 
         x_list = []
         pred_list = []
@@ -225,7 +259,8 @@ class Combined(nn.Module):
         for xs in x:
             pred, xs = self.backbone(xs)
             # feature pooling
-            xs = F.adaptive_avg_pool3d(xs, (8,4,4))
+            _, _, t, _, _ = xs.shape
+            xs = F.adaptive_avg_pool3d(xs, (t,4,4))
             x_list.append(xs)
             pred_list.append(pred)
 
@@ -234,9 +269,11 @@ class Combined(nn.Module):
 
         if self.head is not None:
             pred = self.head(x)
-        else:
-            pred_list = rearrange(pred_list, 's b c -> b c s')
-            pred = reduce(pred_list, 'b c s -> b c', 'mean')
+            if self.pred_fusion is not None:
+                pred = self.pred_fusion(pred)
+            else:
+                pred_list = rearrange(pred_list, 's b c -> b c s')
+                pred = reduce(pred_list, 'b c s -> b c', 'mean')
         return pred
 
 
@@ -244,3 +281,10 @@ class Combined(nn.Module):
 
 
 if __name__ == "__main__":
+
+    net = Combined(backbone='mtnet_s',
+                   head='TemPer_h',
+                   pool='avg',
+                   print_net=False,
+                   num_samplers=4,
+                   t_dim=16)

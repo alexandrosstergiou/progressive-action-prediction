@@ -2,6 +2,7 @@
 ---  I M P O R T  S T A T E M E N T S  ---
 '''
 import os
+os.environ['NUMEXPR_MAX_THREADS'] = '16'
 import sys
 import json
 import socket
@@ -18,16 +19,18 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 
 import dataset
-#from network.symbol_builder import Combined
+from network.symbol_builder import Combined, get_pooling
 from network.config import get_config
 from data import iterator_factory
 from run import metric
-#from run.model import model
+from run.model import model
 from run.lr_scheduler import MultiFactorScheduler
 
 from torch.optim import SGD, Adam, AdamW
 #from torchlars import LARS
 #from pytorch_lamb import Lamb
+
+from decimal import Decimal
 
 datasets = [ 'mini-Kinetics',
              'Kinetics-400',
@@ -47,12 +50,18 @@ parser = argparse.ArgumentParser(description="PyTorch parser for early action pr
 # debug parser arguments
 parser.add_argument('--random_seed', type=int, default=1,
                     help='set seeding (default: 1).')
+parser.add_argument('--print_net', type=bool, default=False,
+                    help="print the architecture.")
 
 # visible video precentage
-parser.add_argument('--video_per', type=float, default=.4,
-                    help='precentage of the video to be used for prediction.')
+parser.add_argument('--video_per', type=float, default=None,
+                    help='precentage of the video to be used for prediction. Will overwrite if precentages for train/val videos are set individually.')
+parser.add_argument('--video_per_train', type=float, default=.4,
+                    help='precentage of the video to be used during training.')
+parser.add_argument('--video_per_val', type=float, default=.4,
+                    help='precentage of the video to be used for prediction during validation.')
 parser.add_argument('--num_samplers', type=int, default=4,
-                    help='number of video samplers. The window from which frames are sampled from will progressively increase based on `num_frames`*`s`/`num_samples` for `s` in range(`num_samples`).')
+                    help='number of video samplers. The window from which frames are sampled from will progressively increase based on `num_frames`*`s`/`num_samplers` for `s` in range(`num_samplers`).')
 
 # data loading parser arguments
 parser.add_argument('--dataset', default='HACS', choices=datasets,
@@ -143,7 +152,7 @@ parser.add_argument('--weight_tie_layers', type=bool, default = False,
 parser.add_argument('--use_gates', type=bool, default = False,
                     help='whether to use early exiting gates.')
 
-parser.add_argument('--pool', type=str, default='em', choices=['max','avg','em','edscw','idw','ada'],
+parser.add_argument('--pool', type=str, default='avg', choices=['max','avg','em','edscw','idw','ada'],
                     help='choice of pooling method to use for selection/fusion of frame features.')
 
 parser.add_argument('--workers', type=int, default=8,
@@ -151,7 +160,7 @@ parser.add_argument('--workers', type=int, default=8,
 
 
 # optimization parser arguments
-parser.add_argument('--resume_epoch', type=int, default=-1,
+parser.add_argument('--resume_epoch', type=int, default=0,
                     help="resuming train from defined epoch.")
 
 # YAML loader
@@ -176,12 +185,11 @@ def autofill(args, parser):
 
     # customized
     if not args.log_file:
-        if os.path.exists("logs"):
-            now = datetime.datetime.now()
-            date = str(now.year) + '-' + str(now.month) + '-' + str(now.day)
-            args.log_file = "logs/{}_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(), date)
-        else:
-            args.log_file = ".{}_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(),date)
+        if not os.path.exists("logs"):
+            os.makedirs("logs")
+        now = datetime.datetime.now()
+        date = str(now.year) + '-' + str(now.month) + '-' + str(now.day)
+        args.log_file = "logs/{}_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(), date)
 
     if args.head:
         args.model_dir = os.path.join(args.results_dir,args.head+'_'+args.backbone)
@@ -253,15 +261,8 @@ if __name__ == "__main__":
     kwargs.update(vars(args))
     kwargs['input_conf'] = input_conf
 
-    '''
-
     # `Combined` object for grouping backbone and head models.
-    net, kwargs = Combined(backbone=args.backbone,
-                           head=args.head,
-                           pool=torch.nn.AdaptiveAvgPool3d(output_size=(t_dim,4,4)),
-                           print_net=False, # True if args.distributed else False
-                           t_dim=clip_length,
-                           **kwargs)
+    net = Combined(**kwargs)
 
     # Create model
     net = model(net=net,
@@ -269,9 +270,7 @@ if __name__ == "__main__":
                 model_prefix=model_prefix,
                 step_callback_freq=1,
                 save_checkpoint_freq=args.save_frequency)
-    net.net.cuda()
-    '''
-
+    #net.net.cuda()
 
     # Make results directory for .csv files if it does not exist
     if args.head:
@@ -293,11 +292,21 @@ if __name__ == "__main__":
 
     print()
 
+    # overwrite precentages if `video_per` is defined
+    if args.video_per is not None:
+        train_per = args.video_per
+        val_per = args.video_per
+    else:
+        train_per = args.video_per_train
+        val_per = args.video_per_val
+
     # Create custom loaders for train and validation
     train_data, eval_loader, train_length = iterator_factory.create(
         data_dir=args.data_dir ,
         labels_dir=args.label_dir ,
-        video_per=args.video_per,
+        video_per_train=train_per,
+        video_per_val=val_per,
+        num_samplers=args.num_samplers,
         batch_size=args.batch_size,
         return_len=True,
         clip_length=clip_length,
@@ -311,74 +320,52 @@ if __name__ == "__main__":
         seed=iter_seed,
         num_workers=args.workers)
 
+    print()
     # Parameter LR configuration for optimiser
     # Base layers are based on the layers as loaded to the model
     params = {
         'head':{'lr':args.lr_mult['head'],
                 'params':[]},
-        'gates':{'lr':args.lr_mult['gates'],
-                 'params':[]},
         'pool':{'lr':args.lr_mult['pool'],
                 'params':[]},
-        'classifier':{'lr':args.lr_mult['classifier'],
-                      'params':[]},
         'base':{'lr':args.lr_base,
                 'params':[]}
     }
-    sys.exit()
 
-    '''
     # Iterate over all parameters
     for name, param in net.net.named_parameters():
         if 'head' in name.lower():
             params['head']['params'].append(param)
-        elif 'gates' in name.lower():
-            params['gates']['params'].append(param)
-        elif 'pool' in name.lower():
+        elif 'pred_fusion' in name.lower():
             params['pool']['params'].append(param)
-        elif 'classifier' in name.lower():
-            params['classifier']['params'].append(param)
         params['base']['params'].append(param)
-
 
     # User feedback
     for key in params.keys():
         if key == 'base':
-            name = '\033[93m'+key+'\033[0m'
-            lr = '\033[93m'+params[key]['lr']+'\033[0m'
-            logging.info("Optimiser:: >> {} lr is set to {} for {} params".format(name, lr, len(params[key]['params'])))
-        elif params[key]['lr'] > 1.0:
-            name = '\033[92m'+key+'\033[0m'
-            lr = '\033[92m'+params[key]['lr']+'\033[0m'
-            logging.info("Optimiser:: >> {} lr is increased by {} for {} params".format(name, lr,len(params[key]['params'])))
-        elif params[key]['lr'] < 1.0:
-            name = '\033[91m'+key+'\033[0m'
-            lr = '\033[91m'+params[key]['lr']+'\033[0m'
-            logging.info("Optimiser:: >> {} lr is increased by {} for {} params".format(name, lr,len(params[key]['params'])))
+            logging.info("Optimiser:: - \033[35m{}\033[0m lr is set to \033[35m{:.1e}\033[0m for \033[35m{}\033[0m params".format(key, params[key]['lr'], len(params[key]['params'])))
+        else:
+            lr_n = params['base']['lr']*params[key]['lr']
+            logging.info("Optimiser:: - \033[35m{}\033[0m lr is set to \033[35m{:.1e}\033[0m for \033[35m{}\033[0m params".format(key, Decimal(lr_n),len(params[key]['params'])))
 
     optimiser = torch.optim.SGD([
         {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
-        {'params': params['gates']['params'], 'lr_mult': params['gates']['lr']},
-        {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},
-        {'params': params['classifier']['params'], 'lr_mult': params['classifier']['lr']},],
+        {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
         lr=args.lr_base,
         momentum=0.9,
         weight_decay=args.weight_decay,
         nesterov=True)
 
     # mixed or single precision based on argument parser
-    if args.precision=='mixed':
-        scaler = torch.cuda.amp.GradScaler()
+    #if args.precision=='mixed':
+    #    scaler = torch.cuda.amp.GradScaler()
 
     # Create DataParallel wrapper
-    net.net.useDataParallel(device_ids=args.gpus)
-
-    # load params and weights loading
-    net.net.weights_loader(backbone = args.pretrained_dir_backbone,
-                           head = args.pretrained_dir_head)
-    '''
+    #net.net.useDataParallel(device_ids=args.gpus)
 
     num_steps = train_length // args.batch_size
+    print()
+    logging.info("IterScheduler:: Each epoch will have {:d} iterations based on batch size {:d}".format(num_steps,args.batch_size))
 
     # Long Cycle steps
     if (args.long_cycles):
@@ -412,7 +399,7 @@ if __name__ == "__main__":
                 index = 0
                 num_steps -= 1
 
-        logging.info("MultiGridBatchScheduler: New number of batches per epoch is {:d} being equivalent to {:1.3f} of original number of batches with Long cycles".format(count,float(count)/float(initial_num)))
+        logging.info("MultiGridBatchScheduler:: New number of batches per epoch is {:d} being equivalent to {:1.3f} of original number of batches with Long cycles".format(count,float(count)/float(initial_num)))
         num_steps = count
 
     # Short Cycle steps
@@ -436,7 +423,7 @@ if __name__ == "__main__":
             i += 1
 
         # Update new number of batches
-        print ("New number of batches per epoch is {:d} being equivalent to {:1.3f} of original number of batches with Short cycles".format(i,float(i)/float(initial_num)))
+        logging.info("MultiGridBatchScheduler:: New number of batches per epoch is {:d} being equivalent to {:1.3f} of original number of batches with Short cycles".format(i,float(i)/float(initial_num)))
         num_steps = i
 
     # Split the batch number to four for every change in the long cycles
@@ -455,12 +442,33 @@ if __name__ == "__main__":
         if (long_steps[0]==0):
             long_steps[0]=1
 
-    '''
+    # Options acceptable on training:
+    #   - `resume_epoch` == 0 and `pretrained_dir` is None : Training from scratch.
+    #   - `resume_epoch` == 0 and `pretrained_dir` is not None: Fine-tuning (load only checkpoint).
+    #   - `resume_epoch` != 0 and `pretrained_dir` is not None: Resume training (load entire "state_dict").
+    #   - `resume_epoch` != 0 and `pretrained_dir` is None: N/A catch with assert
+
+    
+    assert not(args.resume_epoch != 0 and args.pretrained_dir is None), 'Initialiser::  Error in training configuration occured! Cannot use argument `resume_epoch` with non-zero integer without specifying the `pretrained_dir` string directory to load weights from!'
+
     # resume training: model and optimiser - (account of various batch sizes)
-    if args.resume_epoch < 0:
+    if args.resume_epoch == 0:
+        if args.pretrained_dir is None:
+            # Train from scratch
+            epoch_start = 0
+            step_counter = 0
+        else:
+            # Fine tuning
+            _, optimiser = net.load_checkpoint(path=args.pretrained_dir, optimiser=optimiser)
         epoch_start = 0
         step_counter = 0
     else:
+        # Resume training
+        epoch, _ = net.load_checkpoint(path=args.pretrained_dir, epoch=args.resume_epoch)
+        epoch_start = args.resume_epoch # change if you are to use "state_dict"'s epoch
+        step_counter = epoch_start * num_steps
+
+
         # Try to load previous state dict in case `pretrained_dir` is None
         if not args.pretrained_dir:
             try:
@@ -469,7 +477,6 @@ if __name__ == "__main__":
                 logging.warning('Initialiser:: No previous checkpoint found! You can specify the file path explicitly with `pretrained_dir` argument.')
         epoch_start = args.resume_epoch
         step_counter = epoch_start * num_steps
-    '''
 
     # Step dictionary creation
     iteration_steps = {'long_0':[],'long_1':[],'long_2':[],'long_3':[],'short_0':[],'short_1':[],'short_2':[]}
@@ -495,7 +502,7 @@ if __name__ == "__main__":
             else:
                 iteration_steps['short_2'].append(batch_i)
 
-
+    sys.exit()
     # set learning rate scheduler
     lr_scheduler = MultiFactorScheduler(base_lr=args.lr_base,
                                         steps=[x*num_steps for x in args.lr_steps],
@@ -514,7 +521,6 @@ if __name__ == "__main__":
 
     logging.info('LRScheduler: The learning rate will change at steps: '+str([x*num_steps for x in args.lr_steps]))
 
-    '''
     # Main training happens here
     net.fit(train_iter=train_data,
             eval_iter=eval_loader,
@@ -529,7 +535,6 @@ if __name__ == "__main__":
             epoch_start=epoch_start,
             epoch_end=kwargs.end_epoch,
             directory=results_path)
-    '''
 
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---
