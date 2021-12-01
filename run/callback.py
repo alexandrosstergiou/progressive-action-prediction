@@ -44,9 +44,9 @@ class Callback(object):
         str_out = ""
         if self.with_header:
             if epoch is not None:
-                str_out += "Epoch {:s} ".format(("[%d / %d]"%(epoch,self.total_epochs)).ljust(5, ' '))
+                str_out += "Epoch {:s} ".format(("[%d/%d]"%(epoch,self.total_epochs)).ljust(5, ' '))
             if batch is not None:
-                str_out += "Batch {:s} ".format(("[%d / %d]"%(batch,self.total_batches)).ljust(6, ' '))
+                str_out += "Batch {:s} ".format(("[%d/%d]"%(batch,self.total_batches)).ljust(6, ' '))
         return str_out
 '''
 ===  E N D  O F  C L A S S  C A L L B A C K ===
@@ -204,7 +204,7 @@ class MetricPrinter(Callback):
                 if (value is None):
                     continue
                 if (name=='batch_size'):
-                    str_out += "{} = ({:5d},{:1d},{:2d},{:3d},{:3d})".format(name,*value)
+                    str_out += "{} = ({:3d},{:1d},{:1d},{:2d},{:3d},{:3d})".format(name,*value)
                 elif (name=='lr'):
                     val = Decimal(value)
                     str_out += "{} = {:.2e}".format(name,val)

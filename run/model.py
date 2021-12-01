@@ -2,7 +2,7 @@
 ---  I M P O R T  S T A T E M E N T S  ---
 '''
 import torch
-import os
+import os, sys
 import json
 import gc
 import csv
@@ -12,6 +12,8 @@ coloredlogs.install()
 import math
 from . import metric
 from . import callback
+
+import torch.cuda.amp as amp
 
 
 '''
@@ -192,34 +194,39 @@ class static_model(object):
             logging.debug("Checkpoint (model & optimiser) saved to: {}".format(save_path))
 
 
-    def forward(self, data, target, percision):
+    def forward(self, data, target, precision):
         # Data conversion
-        if percision=='mixed':
-            data = data.half().cuda()
+        if precision=='mixed':
+            data = data.cuda().half()
         else:
-            data =  data.float().cuda()
+            data =  data.cuda().float()
         target = target.cuda()
 
         # Forward for training/evaluation
         if self.net.training:
-            if percision=='mixed':
-                with torch.cuda.amp.autocast():
+            if precision=='mixed':
+                with amp.autocast():
                     output = self.net(data)
             else:
                 output = self.net(data)
         else:
             with torch.no_grad():
-                if percision=='mixed':
-                    with torch.cuda.amp.autocast():
+                if precision=='mixed':
+                    with amp.autocast():
                         output = self.net(data)
                 else:
                     output = self.net(data)
         # Use (loss) criterion if specified
         if hasattr(self, 'criterion') and self.criterion is not None and target is not None:
-            loss = self.criterion(output, target)
+            if precision=='mixed':
+                with amp.autocast():
+                    loss = self.criterion(output, target)
+            else:
+                loss = self.criterion(output, target)
         else:
             loss = None
-        return output, loss
+
+        return [output], [loss]
 '''
 ===  E N D  O F  C L A S S  S T A T I C M O D E L ===
 '''
@@ -320,7 +327,11 @@ class model(static_model):
             param_group['lr'] = lr * lr_mult
 
 
-    def fit(self, train_iter, optimiser, lr_scheduler, long_short_steps_dir,
+    def fit(self,
+            train_iter,
+            optimiser,
+            lr_scheduler,
+            long_short_steps_dir,
             no_cycles,
             eval_iter=None,
             batch_shape=(24,16,224,224),
@@ -330,6 +341,8 @@ class model(static_model):
             epoch_start=0,
             epoch_end=10000,
             directory=None,
+            precision='mixed',
+            scaler=None,
             **kwargs):
 
         # Check kwargs used
@@ -343,7 +356,6 @@ class model(static_model):
         train_loaders = {}
         active_batches = {}
 
-        workers= 4
         n_workers = workers
 
         # Create files to write results to
@@ -447,11 +459,6 @@ class model(static_model):
                 if (h%2 != 0): h+=1
                 if (w%2 != 0): w+=1
 
-                #if (b>1000):
-                #    n_workers = workers + 4
-                #elif (b>100):
-                #    n_workers = workers + 2
-
 
                 if cycles:
                     train_iter.size_setter(new_size=(t,h,w))
@@ -470,7 +477,6 @@ class model(static_model):
                             del active_batches[loader_id]
                         active_batches[loader_id]=batch_s
                         gc.collect()
-
 
                     try:
                         gc.collect()
@@ -496,11 +502,10 @@ class model(static_model):
                         data,target,_ = next(train_loaders[loader_id])
                         sum_read_elapse = time.time() - sum_read_elapse
 
-
                     gc.collect()
                 else:
                     sum_read_elapse = time.time()
-                    data,target,_ = next(train_loader)
+                    data,target = next(train_loader)
                     sum_read_elapse = time.time() - sum_read_elapse
 
                 self.callback_kwargs['batch'] = i_batch
@@ -513,7 +518,7 @@ class model(static_model):
                         # [forward] making next step
                         torch.cuda.empty_cache()
                         sum_forward_elapse = time.time()
-                        outputs, losses = self.forward(data, target)
+                        outputs, losses = self.forward(data, target, precision=precision)
                         sum_forward_elapse = time.time() - sum_forward_elapse
                         forward = True
 
@@ -521,15 +526,19 @@ class model(static_model):
                         optimiser.zero_grad()
                         sum_backward_elapse = time.time()
                         for loss in losses:
-                            with amp.scale_loss(loss, optimiser) as scaled_loss:
-                                scaled_loss.backward()
-                            #loss.backward()
+                            if precision=='mixed':
+                                scaler.scale(loss).backward()
+                            else:
+                                loss.backward()
                         sum_backward_elapse = time.time() - sum_backward_elapse
                         lr = lr_scheduler.update()
                         batch_size = tuple(data.size())
                         self.adjust_learning_rate(optimiser=optimiser,lr=lr)
-                        optimiser.step()
-
+                        if precision=='mixed':
+                            scaler.step(optimiser)
+                            scaler.update()
+                        else:
+                            optimiser.step()
                         backward = True
                         break
 
@@ -560,7 +569,7 @@ class model(static_model):
                         gc.collect()
 
                 # [evaluation] update train metric
-                metrics.update([output.data.cpu() for output in outputs],
+                metrics.update([output.data.cpu().float() for output in outputs],
                                target.cpu(),
                                [loss.data.cpu() for loss in losses],
                                lr,
@@ -591,6 +600,7 @@ class model(static_model):
                     sum_sample_inst = 0.
                     # callbacks
                     self.step_end_callback()
+
 
             # Epoch end
             self.callback_kwargs['epoch_elapse'] = time.time() - epoch_start_time
@@ -624,7 +634,7 @@ class model(static_model):
 
                     # [forward] making next step
                     torch.cuda.empty_cache()
-                    outputs, losses = self.forward(data, target)
+                    outputs, losses = self.forward(data, target, precision=precision)
 
                     sum_forward_elapse = time.time() - sum_forward_elapse
 

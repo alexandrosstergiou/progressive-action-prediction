@@ -226,9 +226,9 @@ class TemPer_h(nn.Module):
     def __init__(
         self,
         *,
-        num_freq_bands,
+        num_freq_bands=10,
         depth,
-        max_freq,
+        max_freq=10.,
         input_channels = 512,
         num_latents = 256,
         latent_dim = 512,

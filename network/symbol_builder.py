@@ -253,19 +253,17 @@ class Combined(torch.nn.Module):
 
     def forward(self,x):
 
-        x_list = []
-        pred_list = []
-
-        for xs in x:
-            pred, xs = self.backbone(xs)
-            # feature pooling
-            _, _, t, _, _ = xs.shape
-            xs = F.adaptive_avg_pool3d(xs, (t,4,4))
-            x_list.append(xs)
-            pred_list.append(pred)
-
-        # flatten spatio temoral dimensions and stack the differently sampled volumes
-        x = rearrange(torch.stack(x_list,dim=0), 's b c t h w -> b c s t h w')
+        # Assume x of shape [B S C T H W] and reshape to [BxS C T H W]
+        B, _, _, _, _, _ = x.shape
+        x = rearrange(x, 'b s c t h w -> (b s) c t h w')
+        with torch.no_grad():
+            pred, x = self.backbone(x)
+        # feature pooling
+        _, _, t, _, _ = x.shape
+        x = F.adaptive_avg_pool3d(x, (t,4,4))
+        # Rearrange features to [B S C' t 4 4] and predictions [B S C]
+        x = rearrange(x, '(b s) c t h w -> b c s t h w',b=B)
+        pred = rearrange(pred, '(b s) c -> b s c',b=B)
 
         if self.head is not None:
             pred = self.head(x)
@@ -287,4 +285,7 @@ if __name__ == "__main__":
                    pool='avg',
                    print_net=False,
                    num_samplers=4,
-                   t_dim=16)
+                   t_dim=16).cuda()
+    tmp = torch.rand([1, 4, 3, 16, 186, 186]).cuda()
+    out = net(tmp)
+    print('Exited sucessfully',out.shape)

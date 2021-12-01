@@ -60,7 +60,7 @@ parser.add_argument('--video_per_train', type=float, default=.4,
                     help='precentage of the video to be used during training.')
 parser.add_argument('--video_per_val', type=float, default=.4,
                     help='precentage of the video to be used for prediction during validation.')
-parser.add_argument('--num_samplers', type=int, default=4,
+parser.add_argument('--num_samplers', type=int, default=3,
                     help='number of video samplers. The window from which frames are sampled from will progressively increase based on `num_frames`*`s`/`num_samplers` for `s` in range(`num_samplers`).')
 
 # data loading parser arguments
@@ -82,7 +82,7 @@ parser.add_argument('--train_frame_interval', type=int, default=[1,2],
                     help="define the sampling interval between frames.")
 parser.add_argument('--val_frame_interval', type=int, default=2,
                     help="define the sampling interval between frames.")
-parser.add_argument('--batch_size', type=int, default=64,
+parser.add_argument('--batch_size', type=int, default=16,
                     help="batch size")
 parser.add_argument('--long_cycles', type=bool, default=False,
                     help="enable long cycles for batches (Multigrid training).")
@@ -95,7 +95,7 @@ parser.add_argument('--end_epoch', type=int, default=120,
 parser.add_argument('--optimiser', type=str, default='Adam', choices=['AdamW', 'SGD', 'Adam'],
                     help='name of the optimiser to be used.')
 
-parser.add_argument('--lr_base', type=float, default=1e-3,
+parser.add_argument('--lr_base', type=float, default=1e-2,
                     help="base learning rate.")
 parser.add_argument('--lr_mult', type=dict, default={'head':1.0,'gates':0.0,'pool':1e-4,'classifier':0.0},
                     help="learning rate multipliers for different sets of parameters. Acceptable keys include:\n - `head`: for the lr multiplier of the head (temporal) network. Default value is 1.0. \n - `gates`: for the lr multiplier of the per-frame exiting gates. Default value is 0.0. \n - `pool`: For the pooling method. this is only used in the pooling method is parameterised.Default value is 1e-4. \n - `classifier`: for the `fc` clasifier of the network. Default value is 0.0. \n ")
@@ -360,7 +360,13 @@ if __name__ == "__main__":
             weight_decay=args.weight_decay,
             nesterov=True)
     elif args.optimiser=='Adam':
-        optimiser = torch.optim.SGD([
+        optimiser = torch.optim.Adam([
+            {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
+            {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
+            lr=args.lr_base,
+            weight_decay=args.weight_decay)
+    elif args.optimiser=='AdamW':
+        optimiser = torch.optim.AdamW([
             {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
             {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
             lr=args.lr_base,
@@ -372,6 +378,8 @@ if __name__ == "__main__":
     # mixed or single precision based on argument parser
     if args.precision=='mixed':
         scaler = torch.cuda.amp.GradScaler()
+    else:
+        scaler=None
 
     # Create DataParallel wrapper
     net.net = torch.nn.DataParallel(net.net, device_ids=[gpu_id for gpu_id in (args.gpus)])
@@ -533,12 +541,10 @@ if __name__ == "__main__":
 
     logging.info('LRScheduler: The learning rate will change at steps: '+str([x*num_steps for x in args.lr_steps]))
 
-    sys.exit()
-
     # Main training happens here
     net.fit(train_iter=train_data,
             eval_iter=eval_loader,
-            batch_shape=(int(kwargs.batch_size),int(clip_length),int(clip_size),int(clip_size)),
+            batch_shape=(int(args.batch_size),int(clip_length),int(clip_size),int(clip_size)),
             workers=args.workers,
             no_cycles=(not(args.long_cycles) and not(args.short_cycles)),
             optimiser=optimiser,
@@ -547,8 +553,10 @@ if __name__ == "__main__":
             metrics=metrics,
             iter_per_epoch=num_steps,
             epoch_start=epoch_start,
-            epoch_end=kwargs.end_epoch,
-            directory=results_path)
+            epoch_end=args.end_epoch,
+            directory=results_path,
+            precision=args.precision,
+            scaler=scaler)
 
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---
