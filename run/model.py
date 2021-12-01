@@ -108,7 +108,7 @@ class static_model(object):
     def load_state(self, state_dict, strict=False):
         # Strict mode that structure should match exactly
         if strict:
-            self.net.load_state_dict(state_dict=state_dict)
+            self.net.load_state(state_dict=state_dict)
         else:
             # Iteration over both state dicts
             n_state_dict_keys = list(self.net.state_dict().keys())
@@ -178,7 +178,7 @@ class static_model(object):
             os.makedirs(base_directory)
 
         # Create optimiser state if it does not exist. Use the `epoch` and `state_dict`
-        state_dict = self.net.get_state_dict()
+        state_dict = self.net.state_dict()
 
         # Check if `backbone_optimiser_state` is not None
         if optimiser_state is None:
@@ -459,20 +459,19 @@ class model(static_model):
                 if (h%2 != 0): h+=1
                 if (w%2 != 0): w+=1
 
-
+                batch_s = (t,h,w)
                 if cycles:
                     train_iter.size_setter(new_size=(t,h,w))
 
-                    batch_s = (t,h,w)
                     if (batch_s not in active_batches.values()):
                         logging.info('Creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
                         # Ensure rendomisation
                         train_iter.shuffle(i_epoch+i_batch)
                         # create dataloader corresponding to the created dataset.
-                        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False)
+                        train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False))
                         if loader_id in train_loaders:
                             del train_loaders[loader_id]
-                        train_loaders[loader_id]=iter(train_loader)
+                        train_loaders[loader_id]=train_loader
                         if loader_id in active_batches:
                             del active_batches[loader_id]
                         active_batches[loader_id]=batch_s
@@ -481,7 +480,7 @@ class model(static_model):
                     try:
                         gc.collect()
                         sum_read_elapse = time.time()
-                        data,target,_ = next(train_loaders[loader_id])
+                        data,target = next(train_loaders[loader_id])
                         sum_read_elapse = time.time() - sum_read_elapse
                     except Exception as e:
                         logging.warning(e)
@@ -489,7 +488,7 @@ class model(static_model):
                         logging.warning('Re-creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
                         # Ensure rendomisation
                         train_iter.shuffle(i_epoch+i_batch)
-                        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False)
+                        train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False))
 
                         if loader_id in train_loaders:
                             del train_loaders[loader_id]
@@ -499,7 +498,7 @@ class model(static_model):
                         active_batches[loader_id]=batch_s
                         gc.collect()
                         sum_read_elapse = time.time()
-                        data,target,_ = next(train_loaders[loader_id])
+                        data,target = next(train_loaders[loader_id])
                         sum_read_elapse = time.time() - sum_read_elapse
 
                     gc.collect()
@@ -560,11 +559,11 @@ class model(static_model):
                         gc.collect()
                         optimiser.zero_grad()
                         torch.cuda.empty_cache()
-                        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False)
-                        train_loaders[loader_id]=iter(train_loader)
+                        train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False))
+                        train_loaders[loader_id]=train_loader
                         active_batches[loader_id]=batch_s
                         sum_read_elapse = time.time()
-                        data,target,_ = next(train_loaders[loader_id])
+                        data,target = next(train_loaders[loader_id])
                         sum_read_elapse = time.time() - sum_read_elapse
                         gc.collect()
 
@@ -601,7 +600,6 @@ class model(static_model):
                     # callbacks
                     self.step_end_callback()
 
-
             # Epoch end
             self.callback_kwargs['epoch_elapse'] = time.time() - epoch_start_time
             self.callback_kwargs['optimiser_dict'] = optimiser.state_dict()
@@ -626,7 +624,7 @@ class model(static_model):
                 sum_sample_inst = 0
                 #accurac_dict = {} # (!!!) In order to use a per-class accuracy ensure that the batch size is 1
 
-                for i_batch, (data, target, path) in enumerate(eval_iter):
+                for i_batch, (data, target) in enumerate(eval_iter):
 
                     sum_read_elapse = time.time()
                     self.callback_kwargs['batch'] = i_batch
@@ -638,8 +636,7 @@ class model(static_model):
 
                     sum_forward_elapse = time.time() - sum_forward_elapse
 
-
-                    metrics.update([output.data.cpu() for output in outputs],
+                    metrics.update([output.data.cpu().float() for output in outputs],
                                     target.cpu(),
                                    [loss.data.cpu() for loss in losses])
 
@@ -655,11 +652,9 @@ class model(static_model):
                         accurac_dict[label] = {'acc':m[1][0][1] , 'num':1}
                     '''
 
-
                     val_top1_sum.append(m[1][0][1])
                     val_top5_sum.append(m[2][0][1])
                     val_loss_sum.append(m[0][0][1])
-
 
                     sum_sample_inst += data.shape[0]
 
@@ -689,7 +684,6 @@ class model(static_model):
                 val_loss_sum = sum(val_loss_sum)/l
                 val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_sum), 'Top5':str(val_top5_sum),'Loss':str(val_loss_sum)})
                 logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_sum,val_top5_sum,val_loss_sum))
-
 
         logging.info("--- Finished ---")
         train_writer.close()

@@ -188,6 +188,7 @@ class Attention(nn.Module):
 
         self.scale = dim_head ** -0.5
         self.heads = heads
+        self.temp = 5.0
 
         self.to_q = nn.Linear(query_dim, inner_dim, bias = False)
         self.to_kv = nn.Linear(context_dim, inner_dim * 2, bias = False)
@@ -215,6 +216,7 @@ class Attention(nn.Module):
             sim.masked_fill_(~mask, max_neg_value)
 
         # attention, what we cannot get enough of
+        #sim /= self.temp
         attn = sim.softmax(dim = -1)
 
         out = einsum('b i j, b j d -> b i d', attn, v)
@@ -346,13 +348,14 @@ class TemPer_h(nn.Module):
         data = rearrange(data, 's b ... d -> s b (...) d')
 
         # Repeat latents over batch dim
-        x_t = repeat(self.latents, 'n d -> b n d', b = b)
+        x_l = repeat(self.latents, 'n d -> b n d', b = b)
 
         # layers
         x_list = []
 
         # Main calls
         for i,(cross_attn, cross_ff, self_attns, depth_attn, depth_ff) in enumerate(self.layers):
+            x_t = x_l
             x_prev = x_t
             # Cross attention
             x_t = cross_attn(x_t, context = data[i], mask = mask) + x_t
