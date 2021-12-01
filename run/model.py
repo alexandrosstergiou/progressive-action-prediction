@@ -150,11 +150,11 @@ class static_model(object):
         if optimiser:
             if 'optimizer' in checkpoint.keys() and all_params_loaded:
                 optimiser.load_state_dict(checkpoint['optimizer'])
-                logging.info("Initialiser::  Model & Optimiser states are resumed from: `{}'".format(load_path))
+                logging.info("Initialiser::  Model & Optimiser states are resumed from: `{}'".format(path))
             else:
-                logging.warning("Initialiser:: Did not load optimiser state from: `{}'".format(load_path))
+                logging.warning("Initialiser:: Did not load optimiser state from: `{}'".format(path))
         else:
-            logging.info("Initialiser:: Only model state resumed from: `{}'".format(load_path))
+            logging.info("Initialiser:: Only model state resumed from: `{}'".format(path))
 
         if epoch is not None:
             if 'epoch' in checkpoint.keys():

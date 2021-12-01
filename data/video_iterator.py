@@ -326,8 +326,8 @@ class VideoIter(data.Dataset):
     def get_video_dict(self, location, csv_file, include_timeslices=True):
 
         # Esure that both given dataset location and csv filepath do exist
-        assert os.path.exists(location), "VideoIter:: failed to locate given dataset location: `{}'".format(location)
-        assert os.path.exists(csv_file), "VideoIter:: failed to locate given csv file location: `{}'".format(csv_file)
+        assert os.path.exists(location), "VideoIter:: failed to locate dataset at given location: `{}'".format(location)
+        assert os.path.exists(csv_file), "VideoIter:: failed to locate csv file at given location: `{}'".format(csv_file)
 
         # building dataset
         # - videos_dict : Used to store all videos in a dictionary format with video_index(key) : video_info(value)

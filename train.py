@@ -111,7 +111,7 @@ parser.add_argument('--results_dir', type=str, default="./results",
                     help="folder for logging accuracy and saving models.")
 parser.add_argument('--save_frequency', type=float, default=1,
                     help="save once after N epochs.")
-parser.add_argument('--log_file', type=str, default="",
+parser.add_argument('--log_file', type=str, default=None,
                     help="set logging file.")
 
 # GPU-device related parser arguments
@@ -184,7 +184,8 @@ def autofill(args, parser):
             args.lr_mult[key] = defaults['lr_mult'][key]
 
     # customized
-    if not args.log_file:
+    if args.log_file is None:
+        print('LOG FILE NOT INITIALISED')
         if not os.path.exists("logs"):
             os.makedirs("logs")
         now = datetime.datetime.now()
@@ -214,10 +215,11 @@ if __name__ == "__main__":
 
     if args.config is not None:
         # load YAML file options
+        print(args.config)
         opt = yaml.load(open(args.config), Loader=yaml.FullLoader)
         # overwrite arguments based on YAML options
-        opt.update(vars(args))
-        args = opt
+        vars(args).update(opt)
+
 
     # Use file logger + console output (for servers and real-time feedback)
     logger = logging.getLogger('')
@@ -270,7 +272,7 @@ if __name__ == "__main__":
                 model_prefix=model_prefix,
                 step_callback_freq=1,
                 save_checkpoint_freq=args.save_frequency)
-    #net.net.cuda()
+    net.net.cuda()
 
     # Make results directory for .csv files if it does not exist
     if args.head:
@@ -313,6 +315,7 @@ if __name__ == "__main__":
         clip_size=clip_size,
         val_clip_length=clip_length,
         val_clip_size=clip_size,
+        include_timeslices = dataset_cfg['include_timeslices'],
         train_interval=args.train_frame_interval,
         val_interval=args.val_frame_interval,
         mean=input_conf['mean'],
@@ -348,20 +351,30 @@ if __name__ == "__main__":
             lr_n = params['base']['lr']*params[key]['lr']
             logging.info("Optimiser:: - \033[35m{}\033[0m lr is set to \033[35m{:.1e}\033[0m for \033[35m{}\033[0m params".format(key, Decimal(lr_n),len(params[key]['params'])))
 
-    optimiser = torch.optim.SGD([
-        {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
-        {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
-        lr=args.lr_base,
-        momentum=0.9,
-        weight_decay=args.weight_decay,
-        nesterov=True)
+    if args.optimiser=='SGD':
+        optimiser = torch.optim.SGD([
+            {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
+            {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
+            lr=args.lr_base,
+            momentum=0.9,
+            weight_decay=args.weight_decay,
+            nesterov=True)
+    elif args.optimiser=='Adam':
+        optimiser = torch.optim.SGD([
+            {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
+            {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
+            lr=args.lr_base,
+            weight_decay=args.weight_decay)
+    else:
+        logging.error('Optimiser:: Initialisation of optimiser failed! No implementation available for optimiser named {}'.format(args.optimiser))
+        raise NotImplemented
 
     # mixed or single precision based on argument parser
-    #if args.precision=='mixed':
-    #    scaler = torch.cuda.amp.GradScaler()
+    if args.precision=='mixed':
+        scaler = torch.cuda.amp.GradScaler()
 
     # Create DataParallel wrapper
-    #net.net.useDataParallel(device_ids=args.gpus)
+    net.net = torch.nn.DataParallel(net.net, device_ids=[gpu_id for gpu_id in (args.gpus)])
 
     num_steps = train_length // args.batch_size
     print()
@@ -448,7 +461,7 @@ if __name__ == "__main__":
     #   - `resume_epoch` != 0 and `pretrained_dir` is not None: Resume training (load entire "state_dict").
     #   - `resume_epoch` != 0 and `pretrained_dir` is None: N/A catch with assert
 
-    
+
     assert not(args.resume_epoch != 0 and args.pretrained_dir is None), 'Initialiser::  Error in training configuration occured! Cannot use argument `resume_epoch` with non-zero integer without specifying the `pretrained_dir` string directory to load weights from!'
 
     # resume training: model and optimiser - (account of various batch sizes)
@@ -502,7 +515,6 @@ if __name__ == "__main__":
             else:
                 iteration_steps['short_2'].append(batch_i)
 
-    sys.exit()
     # set learning rate scheduler
     lr_scheduler = MultiFactorScheduler(base_lr=args.lr_base,
                                         steps=[x*num_steps for x in args.lr_steps],
@@ -521,12 +533,14 @@ if __name__ == "__main__":
 
     logging.info('LRScheduler: The learning rate will change at steps: '+str([x*num_steps for x in args.lr_steps]))
 
+    sys.exit()
+
     # Main training happens here
     net.fit(train_iter=train_data,
             eval_iter=eval_loader,
             batch_shape=(int(kwargs.batch_size),int(clip_length),int(clip_size),int(clip_size)),
-            workers=8,
-            no_cycles=(not(kwargs.enable_long_cycles) and not(kwargs.enable_short_cycles)),
+            workers=args.workers,
+            no_cycles=(not(args.long_cycles) and not(args.short_cycles)),
             optimiser=optimiser,
             long_short_steps_dir=iteration_steps,
             lr_scheduler=lr_scheduler,
