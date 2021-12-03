@@ -188,7 +188,7 @@ class Attention(nn.Module):
 
         self.scale = dim_head ** -0.5
         self.heads = heads
-        self.temp = 5.0
+        self.temp = 2.0
 
         self.to_q = nn.Linear(query_dim, inner_dim, bias = False)
         self.to_kv = nn.Linear(context_dim, inner_dim * 2, bias = False)
@@ -197,6 +197,12 @@ class Attention(nn.Module):
             nn.Linear(inner_dim, query_dim),
             nn.Dropout(dropout)
         )
+
+    @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+    def stable_softmax(self,x):
+        x = torch.nan_to_num(x)
+        x -= reduce(x, '... d -> ... 1', 'max')
+        return x.softmax(dim = -1)
 
     def forward(self, x, context = None, mask = None):
         h = self.heads
@@ -217,7 +223,9 @@ class Attention(nn.Module):
 
         # attention, what we cannot get enough of
         #sim /= self.temp
-        attn = sim.softmax(dim = -1)
+        #sim = torch.clamp(sim, min=1e-8, max=1e+8)
+        attn = self.stable_softmax(sim)
+        #attn = torch.nan_to_num(attn)
 
         out = einsum('b i j, b j d -> b i d', attn, v)
         out = rearrange(out, '(b h) n d -> b n (h d)', h = h)
@@ -284,6 +292,7 @@ class TemPer_h(nn.Module):
         input_dim = fourier_channels + input_channels
 
         self.latents = nn.Parameter(torch.randn(num_latents, latent_dim))
+        torch.nn.init.kaiming_uniform(self.latents)
         self.num_classes = num_classes
 
         get_cross_attn = lambda: PreNorm(latent_dim, Attention(latent_dim, input_dim, heads = cross_heads, dim_head = cross_dim_head, dropout = attn_dropout), context_dim = input_dim)

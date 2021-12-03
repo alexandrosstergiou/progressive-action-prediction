@@ -167,10 +167,14 @@ class static_model(object):
         return epoch, optimiser
 
 
-    def save_checkpoint(self, epoch, base_directory, optimiser_state=None):
+    def save_checkpoint(self, epoch, base_directory, optimiser_state=None, best=False):
 
         # Create save path
-        save_path = os.path.join(base_directory,'{}_ep-{:04d}.pth'.format(base_directory.split('/')[-1],epoch))
+        if not best:
+            save_path = os.path.join(base_directory,'{}_ep-{:04d}.pth'.format(base_directory.split('/')[-1],epoch))
+        else:
+            save_path = os.path.join(base_directory,'{}_best.pth'.format(base_directory.split('/')[-1]))
+
 
         # Create directory if path does not exist
         if not os.path.exists(base_directory):
@@ -358,29 +362,40 @@ class model(static_model):
 
         n_workers = workers
 
-        # Create files to write results to
-        if (directory is not None):
-            train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)),'w')
-        else:
-            train_file = open('./train_results_s{0:04d}.csv'.format(epoch_start),'w')
-        train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
-        train_writer.writeheader()
-
-        if (directory is not None):
-            val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)),'w')
-        else:
-            val_file = open('./val_resultss{0:04d}.csv'.format(epoch_start),'w')
-        val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
-        val_writer.writeheader()
-        #val_writer = csv.writer(f_val, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-
 
         cycles = True
 
         self.step_callback.set_tot_epochs(epoch_end)
         self.step_callback.set_tot_batches(iter_per_epoch)
 
+        # Create files to write results to
+        train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
+        train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+        # if file is empty write header
+        if os.stat(train_file).st_size == 0
+            train_writer.writeheader()
+
+        val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
+        val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+        # if file is empty write header
+        if os.stat(val_file).st_size == 0
+            val_writer.writeheader()
+        #val_writer = csv.writer(f_val, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+        train_file.close()
+        val_file.close()
+
+        # Set best eval for saving model
+        best_val_top1 = 0.0
+
         for i_epoch in range(epoch_start, epoch_end):
+
+            # Create files to write results to
+            train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
+            train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+
+            val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
+            val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
 
 
             if (no_cycles):
@@ -392,7 +407,7 @@ class model(static_model):
             epoch_start_time = time.time()
 
 
-            # values for writing average topk,loss in epoch
+            # values for writing average topk,loss per epoch
             train_top1_sum = []
             train_top5_sum = []
             train_loss_sum = []
@@ -679,15 +694,26 @@ class model(static_model):
                 self.step_end_callback()
 
                 l = len(val_top1_sum)
-                val_top1_sum = sum(val_top1_sum)/l
-                val_top5_sum = sum(val_top5_sum)/l
-                val_loss_sum = sum(val_loss_sum)/l
-                val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_sum), 'Top5':str(val_top5_sum),'Loss':str(val_loss_sum)})
-                logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_sum,val_top5_sum,val_loss_sum))
+                val_top1_avg = sum(val_top1_sum)/l
+                val_top5_avg = sum(val_top5_sum)/l
+                val_loss_avg = sum(val_loss_sum)/l
+                val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_avg), 'Top5':str(val_top5_avg),'Loss':str(val_loss_avg)})
+                logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_avg,val_top5_avg,val_loss_avg))
+
+                # Save best model (regardless of `save_frequency`)
+                if val_top1_avg > best_val_top1:
+                    best_val_top1 = val_top1_avg
+                    self.save_checkpoint(epoch=self.callback_kwargs['epoch']+1,
+                                         optimiser_state=self.callback_kwargs['optimiser_dict'],
+                                         base_directory=directory,
+                                         best=True)
+
+                train_file.close()
+                val_file.close()
+
 
         logging.info("--- Finished ---")
-        train_writer.close()
-        val_writer.close()
+
 '''
 ===  E N D  O F  C L A S S  M O D E L ===
 '''

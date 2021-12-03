@@ -78,9 +78,9 @@ parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
 parser.add_argument('--frame_size', default=224,
                     help="define the (max) frame size of each input sample.")
-parser.add_argument('--train_frame_interval', type=int, default=[1,2],
+parser.add_argument('--train_frame_interval', type=int, default=[1,2,3,4],
                     help="define the sampling interval between frames.")
-parser.add_argument('--val_frame_interval', type=int, default=2,
+parser.add_argument('--val_frame_interval', type=int, default=[1,2],
                     help="define the sampling interval between frames.")
 parser.add_argument('--batch_size', type=int, default=16,
                     help="batch size")
@@ -92,12 +92,12 @@ parser.add_argument('--end_epoch', type=int, default=120,
                     help="maxmium number of training epoch.")
 
 
-parser.add_argument('--optimiser', type=str, default='Adam', choices=['AdamW', 'SGD', 'Adam'],
+parser.add_argument('--optimiser', type=str, default='AdamW', choices=['AdamW', 'SGD', 'Adam'],
                     help='name of the optimiser to be used.')
 
 parser.add_argument('--lr_base', type=float, default=1e-2,
                     help="base learning rate.")
-parser.add_argument('--lr_mult', type=dict, default={'head':1.0,'gates':0.0,'pool':1e-4,'classifier':0.0},
+parser.add_argument('--lr_mult', type=dict, default={'head':.1,'pool':1e-4,'classifier':1.0},
                     help="learning rate multipliers for different sets of parameters. Acceptable keys include:\n - `head`: for the lr multiplier of the head (temporal) network. Default value is 1.0. \n - `gates`: for the lr multiplier of the per-frame exiting gates. Default value is 0.0. \n - `pool`: For the pooling method. this is only used in the pooling method is parameterised.Default value is 1e-4. \n - `classifier`: for the `fc` clasifier of the network. Default value is 0.0. \n ")
 parser.add_argument('--lr_steps', type=list, default=[84, 102, 114],
                     help="epochs in which the (base) learning rate will change.")
@@ -149,8 +149,6 @@ parser.add_argument('--ff_dropout', type=float, default = 0.,
                     help='dropout probability for the feed-forward sub-net.')
 parser.add_argument('--weight_tie_layers', type=bool, default = False,
                     help="whether to weight tie layers (optional).")
-parser.add_argument('--use_gates', type=bool, default = False,
-                    help='whether to use early exiting gates.')
 
 parser.add_argument('--pool', type=str, default='avg', choices=['max','avg','em','edscw','idw','ada'],
                     help='choice of pooling method to use for selection/fusion of frame features.')
@@ -327,6 +325,8 @@ if __name__ == "__main__":
     # Parameter LR configuration for optimiser
     # Base layers are based on the layers as loaded to the model
     params = {
+        'classifier':{'lr':args.lr_mult['classifier'],
+                'params':[]},
         'head':{'lr':args.lr_mult['head'],
                 'params':[]},
         'pool':{'lr':args.lr_mult['pool'],
@@ -337,7 +337,9 @@ if __name__ == "__main__":
 
     # Iterate over all parameters
     for name, param in net.net.named_parameters():
-        if 'head' in name.lower():
+        if 'fc' in name.lower():
+            params['classifier']['params'].append(param)
+        elif 'head' in name.lower():
             params['head']['params'].append(param)
         elif 'pred_fusion' in name.lower():
             params['pool']['params'].append(param)
@@ -353,6 +355,7 @@ if __name__ == "__main__":
 
     if args.optimiser=='SGD':
         optimiser = torch.optim.SGD([
+            {'params': params['classifier']['params'], 'lr_mult': params['classifier']['lr']},
             {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
             {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
             lr=args.lr_base,
@@ -361,12 +364,14 @@ if __name__ == "__main__":
             nesterov=True)
     elif args.optimiser=='Adam':
         optimiser = torch.optim.Adam([
+            {'params': params['classifier']['params'], 'lr_mult': params['classifier']['lr']},
             {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
             {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
             lr=args.lr_base,
             weight_decay=args.weight_decay)
     elif args.optimiser=='AdamW':
         optimiser = torch.optim.AdamW([
+            {'params': params['classifier']['params'], 'lr_mult': params['classifier']['lr']},
             {'params': params['head']['params'], 'lr_mult': params['head']['lr']},
             {'params': params['pool']['params'], 'lr_mult': params['pool']['lr']},],
             lr=args.lr_base,

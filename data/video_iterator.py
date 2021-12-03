@@ -12,6 +12,7 @@ import numpy as np
 import sqlite3
 import torch
 import torch.utils.data as data
+import torch.nn.functional as F
 import coloredlogs, logging
 coloredlogs.install()
 import linecache
@@ -256,23 +257,22 @@ class VideoIter(data.Dataset):
             #print('sampling frames...',type(frame_count),type(v_id))
             # dynamic sampling
             sampled_frames = []
+            #logging.info('GETTING ITEM')
             # Get indices for every sampler
             for s in range(1,self.num_samplers+1):
                 # generating indices
                 range_max = int(frame_count * (s/self.num_samplers))
                 sampled_indices = self.sampler.sampling(range_max=range_max, v_id=v_id)
-
                 # extracting frames
-                sampled_frames.append(video.extract_frames(indices=sampled_indices))
+                sampled_frames.append(video.extract_frames(indices=sampled_indices).unsqueeze(0))
 
-            sampled_frames = rearrange(sampled_frames, 's b c t h w -> s b c t h w')
+            # create tensor
+            sampled_frames = torch.cat(sampled_frames, dim=0)
 
         except IOError as e:
             logging.warning(">> I/O error({0}): {1}".format(e.errno, e.strerror))
 
-
         #print('Processed item w/ index: ',v_id, 'and shape',sampled_frames.shape)
-
         return sampled_frames, label, vid_path
 
 
