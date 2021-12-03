@@ -219,11 +219,13 @@ class Combined(torch.nn.Module):
                  pool=None,
                  print_net=False,
                  num_samplers=4,
+                 precision='fp32',
                  **kwargs):
         super(Combined, self).__init__()
 
         assert num_samplers >= 1, 'Cannot create model with `num_samplers` being less than 1!'
         self.samplers = num_samplers
+        self.precision = precision
 
         # Get backbone model, input configuration, head model and pooling method
         self.backbone = get_symbol(backbone, samplers=self.samplers, headless =True, **kwargs)
@@ -257,7 +259,11 @@ class Combined(torch.nn.Module):
         B, _, _, _, _, _ = x.shape
         x = rearrange(x, 'b s c t h w -> (b s) c t h w')
         with torch.no_grad():
-            pred, x = self.backbone(x)
+            with torch.cuda.amp.autocast():
+                pred, x = self.backbone(x)
+            if self.precision=='fp32':
+                pred = pred.float()
+                x = x.float()
         # feature pooling
         _, _, t, _, _ = x.shape
         x = F.adaptive_avg_pool3d(x, (t,4,4))

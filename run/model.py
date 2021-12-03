@@ -372,13 +372,13 @@ class model(static_model):
         train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
         train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
         # if file is empty write header
-        if os.stat(train_file).st_size == 0
+        if (os.stat(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start))).st_size == 0):
             train_writer.writeheader()
 
         val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
         val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
         # if file is empty write header
-        if os.stat(val_file).st_size == 0
+        if (os.stat(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start))).st_size == 0):
             val_writer.writeheader()
         #val_writer = csv.writer(f_val, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
