@@ -190,10 +190,11 @@ def autofill(args, parser):
         date = str(now.year) + '-' + str(now.month) + '-' + str(now.day)
         args.log_file = "logs/{}_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(), date)
 
+    ratio = 'observation_ratio_'+str(args.video_per)
     if args.head:
-        args.model_dir = os.path.join(args.results_dir,args.head+'_'+args.backbone)
+        args.model_dir = os.path.join(args.results_dir,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     else:
-        args.model_dir = os.path.join(args.results_dir,args.backbone)
+        args.model_dir = os.path.join(args.results_dir,ratio,args.backbone)
 
 
     return args

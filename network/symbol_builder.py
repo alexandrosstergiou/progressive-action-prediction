@@ -22,8 +22,8 @@ from ptflops import get_model_complexity_info
 from torchinfo import summary
 
 
-#import adapool_cuda
-#from adaPool import IDWPool1d, EMPool1d, EDSCWPool1d, AdaPool1d
+import adapool_cuda
+from adaPool import IDWPool1d, EMPool1d, EDSCWPool1d, AdaPool1d
 
 
 def beautify_net(net):
@@ -196,7 +196,6 @@ def get_pooling(name, samplers):
         pool = torch.nn.AdaptiveAvgPool1d((1))
     elif name.upper() == 'MAX':
         pool = torch.nn.AdaptiveMaxPool1d((1))
-        '''
     elif name.upper() == 'EM':
         pool = EMPool1d(kernel_size=(num_samplers))
     elif name.upper() == 'EDSCW':
@@ -205,7 +204,6 @@ def get_pooling(name, samplers):
         pool = IDWPool1d(kernel_size=(num_samplers))
     elif name.upper() == 'ADA':
         pool = AdaPool1d(kernel_size=(num_samplers), beta=(1))
-        '''
     else:
         logging.error("Pooling method '{}'' not implemented".format(name))
         raise NotImplementedError()
