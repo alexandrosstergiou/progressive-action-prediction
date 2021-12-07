@@ -428,7 +428,6 @@ class model(static_model):
             batch_start_time = time.time()
             logging.debug("Start epoch {:d}:".format(i_epoch))
             for i_batch in range(iter_per_epoch):
-                if (i_batch % 50 == 0):time.sleep(5)
 
                 b = batch_shape[0]
                 t = batch_shape[1]
@@ -713,6 +712,87 @@ class model(static_model):
 
 
         logging.info("--- Finished ---")
+
+
+
+
+
+
+        def inference(self,
+                      eval_iter=None,
+                      workers=4,
+                      metrics=metric.Accuracy(topk=1),
+                      precision='mixed',
+                      scaler=None,
+                      **kwargs):
+
+            logging.info("Start evaluating model")
+            metrics.reset()
+            self.net.eval()
+            sum_read_elapse = time.time()
+            sum_forward_elapse = 0.
+            sum_sample_inst = 0
+            accurac_dict = {} # (!!!) In order to use a per-class accuracy ensure that the batch size is 1
+
+            for i_batch, (data, target) in enumerate(eval_iter):
+
+                sum_read_elapse = time.time()
+                self.callback_kwargs['batch'] = i_batch
+                sum_forward_elapse = time.time()
+
+                # [forward] making next step
+                torch.cuda.empty_cache()
+                outputs, losses = self.forward(data, target, precision=precision)
+
+                sum_forward_elapse = time.time() - sum_forward_elapse
+
+                metrics.update([output.data.cpu().float() for output in outputs],
+                                target.cpu(),
+                               [loss.data.cpu() for loss in losses])
+
+                m = metrics.get_name_value()
+
+                # Append rates
+
+                if label in accurac_dict:
+                    accurac_dict[target]['acc'] += m[1][0][1]
+                    accurac_dict[target]['num'] += 1
+                else:
+                    accurac_dict[target] = {'acc':m[1][0][1] , 'num':1}
+
+
+                val_top1_sum.append(m[1][0][1])
+                val_top5_sum.append(m[2][0][1])
+                val_loss_sum.append(m[0][0][1])
+
+                sum_sample_inst += data.shape[0]
+
+                if (i_batch%10 == 0):
+                    val_top1_avg = sum(val_top1_sum)/(i_batch+1)
+                    val_top5_avg = sum(val_top5_sum)/(i_batch+1)
+                    val_loss_avg = sum(val_loss_sum)/(i_batch+1)
+                    logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
+
+            # evaluation callbacks
+            self.callback_kwargs['read_elapse'] = sum_read_elapse / data.shape[0]
+            self.callback_kwargs['forward_elapse'] = sum_forward_elapse / data.shape[0]
+            self.callback_kwargs['namevals'] = metrics.get_name_value()
+            self.step_end_callback()
+
+            l = len(val_top1_sum)
+            val_top1_avg = sum(val_top1_sum)/l
+            val_top5_avg = sum(val_top5_sum)/l
+            val_loss_avg = sum(val_loss_sum)/l
+            val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_avg), 'Top5':str(val_top5_avg),'Loss':str(val_loss_avg)})
+            logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_avg,val_top5_avg,val_loss_avg))
+
+            for label in accurac_dict.keys():
+                accurac_dict[label]['acc'] /= accurac_dict[label]['num']
+                logging.info(label +' accuracy: '+str(accurac_dict[label]['acc']))
+
+            # Save to dictionary
+            with open(os.path.join(directory,'class_accuracies.json'), 'w') as jsonf:
+                json.dump(accurac_dict, jsonf)
 
 '''
 ===  E N D  O F  C L A S S  M O D E L ===

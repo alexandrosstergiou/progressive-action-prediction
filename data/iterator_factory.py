@@ -49,6 +49,7 @@ from . import video_sampler as sampler
 '''
 def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
              labels_dir=os.path.join('/media','user','disk0','labels','HACS'),
+             eval_only=False,
              video_per_train=.6,
              video_per_val=.6,
              num_samplers=4,
@@ -67,52 +68,53 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
     logging.debug("VideoIter:: clip_length = {}, interval = [train: {}, val: {}], seed = {}".format( \
                 clip_length, train_interval, val_interval, seed))
 
-    sometimes_aug = lambda aug: iaa.Sometimes(0.25, aug)
-    sometimes_seq = lambda aug: iaa.Sometimes(0.75, aug)
+    if not eval_only:
+        sometimes_aug = lambda aug: iaa.Sometimes(0.25, aug)
+        sometimes_seq = lambda aug: iaa.Sometimes(0.75, aug)
 
 
-    train_sampler = sampler.RandomSampling(num=clip_length,
-                                           interval=train_interval,
-                                           speed=[1.0, 1.0],
-                                           seed=(seed+0))
+        train_sampler = sampler.RandomSampling(num=clip_length,
+                                               interval=train_interval,
+                                               speed=[1.0, 1.0],
+                                               seed=(seed+0))
 
-    train = VideoIter(dataset_location=data_dir,
-                      csv_filepath=os.path.join(labels_dir, 'train.csv'),
-                      video_per=video_per_train,
-                      num_samplers=num_samplers,
-                      include_timeslices = include_timeslices,
-                      sampler=train_sampler,
-                      video_size=(clip_length,clip_size,clip_size),
-                      video_transform = transforms.Compose(
-                          transforms=iaa.Sequential([
-                              iaa.Resize({"shorter-side": 384, "longer-side":"keep-aspect-ratio"}),
-                              iaa.CropToFixedSize(width=384, height=384, position='center'),
-                              iaa.CropToFixedSize(width=clip_size, height=clip_size, position='uniform'),
-                              sometimes_seq(iaa.Sequential([
-                                  sometimes_aug(iaa.GaussianBlur(sigma=[0.1,0.2])),
-                                  sometimes_aug(iaa.Add((-5, 10), per_channel=True)),
-                                  sometimes_aug(iaa.AverageBlur(k=(1,2))),
-                                  sometimes_aug(iaa.Multiply((0.9, 1.1))),
-                                  sometimes_aug(iaa.GammaContrast((0.85,1.15),per_channel=True)),
-                                  sometimes_aug(iaa.AddToHueAndSaturation((-7, 7), per_channel=True)),
-                                  sometimes_aug(iaa.LinearContrast((0.9, 1.1))),
-                                  sometimes_aug(
-                                      iaa.OneOf([
-                                          iaa.PerspectiveTransform(scale=(0.02, 0.05), keep_size=True),
-                                          iaa.Rotate(rotate=(-10,10)),
-                                      ])
-                                  )
-                              ])),
-                              iaa.Fliplr(0.5)
-                          ]),
-                          normalise=[mean,std]
-                      ),
-                      name='train',
-                      shuffle_list_seed=(seed+2))
+        train = VideoIter(dataset_location=data_dir,
+                          csv_filepath=os.path.join(labels_dir, 'train.csv'),
+                          video_per=video_per_train,
+                          num_samplers=num_samplers,
+                          include_timeslices = include_timeslices,
+                          sampler=train_sampler,
+                          video_size=(clip_length,clip_size,clip_size),
+                          video_transform = transforms.Compose(
+                              transforms=iaa.Sequential([
+                                  iaa.Resize({"shorter-side": 384, "longer-side":"keep-aspect-ratio"}),
+                                  iaa.CropToFixedSize(width=384, height=384, position='center'),
+                                  iaa.CropToFixedSize(width=clip_size, height=clip_size, position='uniform'),
+                                  sometimes_seq(iaa.Sequential([
+                                      sometimes_aug(iaa.GaussianBlur(sigma=[0.1,0.2])),
+                                      sometimes_aug(iaa.Add((-5, 10), per_channel=True)),
+                                      sometimes_aug(iaa.AverageBlur(k=(1,2))),
+                                      sometimes_aug(iaa.Multiply((0.9, 1.1))),
+                                      sometimes_aug(iaa.GammaContrast((0.85,1.15),per_channel=True)),
+                                      sometimes_aug(iaa.AddToHueAndSaturation((-7, 7), per_channel=True)),
+                                      sometimes_aug(iaa.LinearContrast((0.9, 1.1))),
+                                      sometimes_aug(
+                                          iaa.OneOf([
+                                              iaa.PerspectiveTransform(scale=(0.02, 0.05), keep_size=True),
+                                              iaa.Rotate(rotate=(-10,10)),
+                                          ])
+                                      )
+                                  ])),
+                                  iaa.Fliplr(0.5)
+                              ]),
+                              normalise=[mean,std]
+                          ),
+                          name='train',
+                          shuffle_list_seed=(seed+2))
 
-    # Only return train iterator
-    if (val_clip_length is None and val_clip_size is None):
-        return train
+        # Only return train iterator
+        if (val_clip_length is None and val_clip_size is None):
+            return train
 
     val_sampler   = sampler.SequentialSampling(num=clip_length,
                                                interval=val_interval,
@@ -134,7 +136,8 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
                                                ]),
                                     normalise=[mean,std]),
                      name='val')
-
+    if eval_only:
+        return val
     return (train, val)
 '''
 ---  E N D  O F  F U N C T I O N  G E T _ D A T A  ---
@@ -156,7 +159,15 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
     [Returns]
         - Tuple for training VideoIter object and validation utils.data.DataLoader object.
 '''
-def create(return_len=False, **kwargs):
+def create(return_len=False, return_train=True, **kwargs):
+
+    if not return_train:
+        val = get_data(eval_only=True,**kwargs)
+        val_loader = torch.utils.data.DataLoader(val,
+            batch_size=kwargs['batch_size'], shuffle=False,
+            num_workers=kwargs['num_workers'], pin_memory=False)
+
+        return val_loader
 
     dataset_iter = get_data(**kwargs)
 
