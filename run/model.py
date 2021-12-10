@@ -354,7 +354,7 @@ class model(static_model):
             logging.warning("Unknown kwargs: {}".format(kwargs))
 
         assert torch.cuda.is_available(), "only support GPU version"
-        torch.autograd.set_detect_anomaly(True)
+        #torch.autograd.set_detect_anomaly(True)
 
         pause_sec = 0.
         train_loaders = {}

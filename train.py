@@ -13,10 +13,6 @@ import argparse
 import yaml
 import math
 import imgaug
-import torch
-import torch.nn.parallel
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 
 import dataset
 from network.symbol_builder import Combined, get_pooling
@@ -25,10 +21,6 @@ from data import iterator_factory
 from run import metric
 from run.model import model
 from run.lr_scheduler import MultiFactorScheduler
-
-from torch.optim import SGD, Adam, AdamW
-#from torchlars import LARS
-#from pytorch_lamb import Lamb
 
 from decimal import Decimal
 
@@ -78,9 +70,9 @@ parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
 parser.add_argument('--frame_size', default=224,
                     help="define the (max) frame size of each input sample.")
-parser.add_argument('--train_frame_interval', type=int, default=[1,2,3,4],
+parser.add_argument('--train_frame_interval', default=[1,2,3,4], nargs='+',
                     help="define the sampling interval between frames.")
-parser.add_argument('--val_frame_interval', type=int, default=[1,2],
+parser.add_argument('--val_frame_interval', default=[1,2], nargs='+',
                     help="define the sampling interval between frames.")
 parser.add_argument('--batch_size', type=int, default=16,
                     help="batch size")
@@ -88,7 +80,7 @@ parser.add_argument('--long_cycles', type=bool, default=False,
                     help="enable long cycles for batches (Multigrid training).")
 parser.add_argument('--short_cycles', type=bool, default=False,
                     help="enable short cycles for batches (Multigrid training).")
-parser.add_argument('--end_epoch', type=int, default=120,
+parser.add_argument('--end_epoch', type=int, default=60,
                     help="maxmium number of training epoch.")
 
 
@@ -97,9 +89,10 @@ parser.add_argument('--optimiser', type=str, default='AdamW', choices=['AdamW', 
 
 parser.add_argument('--lr_base', type=float, default=1e-2,
                     help="base learning rate.")
-parser.add_argument('--lr_mult', type=dict, default={'head':.1,'pool':1e-4,'classifier':1.0},
+# Should be set in YAML config file (not possible through argparse)
+parser.add_argument('--lr_mult', type=dict, default={'head':.1,'pool':.1,'classifier':1.0},
                     help="learning rate multipliers for different sets of parameters. Acceptable keys include:\n - `head`: for the lr multiplier of the head (temporal) network. Default value is 1.0. \n - `gates`: for the lr multiplier of the per-frame exiting gates. Default value is 0.0. \n - `pool`: For the pooling method. this is only used in the pooling method is parameterised.Default value is 1e-4. \n - `classifier`: for the `fc` clasifier of the network. Default value is 0.0. \n ")
-parser.add_argument('--lr_steps', type=list, default=[84, 102, 114],
+parser.add_argument('--lr_steps', default=[14, 32, 44], nargs='+',
                     help="epochs in which the (base) learning rate will change.")
 parser.add_argument('--lr_factor', type=float, default=0.1,
                     help="reduce the learning based on factor.")
@@ -109,20 +102,20 @@ parser.add_argument('--weight_decay', type=float, default=1e-5,
 # storing parser arguments
 parser.add_argument('--results_dir', type=str, default="./results",
                     help="folder for logging accuracy and saving models.")
-parser.add_argument('--save_frequency', type=float, default=1,
+parser.add_argument('--save_frequency', type=float, default=3,
                     help="save once after N epochs.")
 parser.add_argument('--log_file', type=str, default=None,
                     help="set logging file.")
 
 # GPU-device related parser arguments
-parser.add_argument('--gpus', type=list, default=[0,1],
+parser.add_argument('--gpus', default=[0,1], nargs='+',
                     help="define gpu id(s).")
 
 # DL model parser arguments
 parser.add_argument('--pretrained_dir', type=str,  default=None,
                     help="load pretrained model from path. This can be used for either the backbone or head alone or both. Leave empty when training from scratch.")
 
-parser.add_argument('--backbone', type=str, default='MTnet_s',
+parser.add_argument('--backbone', type=str, default='MTnet_xs',
                     help="chose the backbone architecture. See `network` dir for more info.")
 parser.add_argument('--head', type=str, default='Temper_h',
                     help="chose the head architecture. See `network` dir for more info.")
@@ -188,7 +181,8 @@ def autofill(args, parser):
             os.makedirs("logs")
         now = datetime.datetime.now()
         date = str(now.year) + '-' + str(now.month) + '-' + str(now.day)
-        args.log_file = "logs/{}_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(), date)
+        final_str = 'observation_ratio_'+str(args.video_per)+'_'+args.head+'_'+args.backbone+'_'+args.pool
+        args.log_file = "logs/{}_at-{}_datetime_{}_with_{}.log".format('video_pred', socket.gethostname(), date, final_str)
 
     ratio = 'observation_ratio_'+str(args.video_per)
     if args.head:
@@ -210,7 +204,6 @@ if __name__ == "__main__":
 
     # set args & overwrite if YAML file is used
     args = parser.parse_args()
-    args = autofill(args, parser)
 
     if args.config is not None:
         # load YAML file options
@@ -218,6 +211,7 @@ if __name__ == "__main__":
         opt = yaml.load(open(args.config), Loader=yaml.FullLoader)
         # overwrite arguments based on YAML options
         vars(args).update(opt)
+    args = autofill(args, parser)
 
 
     # Use file logger + console output (for servers and real-time feedback)
@@ -229,13 +223,29 @@ if __name__ == "__main__":
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
+    # handle strings in argparse lists
+    args.gpus = [int(i) for i in args.gpus]
+    args.lr_steps = [int(i) for i in args.lr_steps]
+    args.train_frame_interval = [int(i) for i in args.train_frame_interval]
+    args.val_frame_interval = [int(i) for i in args.val_frame_interval]
+
+    # must set visible devices BEFORE importing torch
+    os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1]
+    logging.info('CUDA_VISIBLE_DEVICES set to '+os.environ["CUDA_VISIBLE_DEVICES"])
+
+    # import torch
+    import torch
+    import torch.nn.parallel
+    import torch.backends.cudnn as cudnn
+    import torch.distributed as dist
+    from torch.optim import SGD, Adam, AdamW
+    #from torchlars import LARS
+    #from pytorch_lamb import Lamb
 
     logging.info("Using pytorch version {} ({})".format(torch.__version__, torch.__path__))
     logging.info("Start training with args:\n" + json.dumps(vars(args), indent=4, sort_keys=True))
     # Set device states
     logging.info('CUDA availability: '+str(torch.cuda.is_available()))
-    os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1] # before using torch
-    logging.info('CUDA_VISIBLE_DEVICES set to '+os.environ["CUDA_VISIBLE_DEVICES"])
     assert torch.cuda.is_available(), "CUDA is not available. CUDA devices are required from this repo!"
     torch.manual_seed(args.random_seed)
     torch.cuda.manual_seed(args.random_seed)
@@ -274,8 +284,9 @@ if __name__ == "__main__":
     net.net.cuda()
 
     # Make results directory for .csv files if it does not exist
+    ratio = 'observation_ratio_'+str(args.video_per)
     if args.head:
-        results_path = os.path.join(args.results_dir,args.dataset,args.head+'_'+args.backbone)
+        results_path = os.path.join(args.results_dir,args.dataset,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     if not os.path.exists(results_path):
         os.makedirs(results_path)
 
@@ -388,7 +399,7 @@ if __name__ == "__main__":
         scaler=None
 
     # Create DataParallel wrapper
-    net.net = torch.nn.DataParallel(net.net, device_ids=[gpu_id for gpu_id in (args.gpus)])
+    net.net = torch.nn.DataParallel(net.net, device_ids=[gpu_id for gpu_id in range(torch.cuda.device_count())])
 
     num_steps = train_length // args.batch_size
     print()

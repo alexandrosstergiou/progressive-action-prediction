@@ -197,17 +197,25 @@ def get_pooling(name, samplers):
     elif name.upper() == 'MAX':
         pool = torch.nn.AdaptiveMaxPool1d((1))
     elif name.upper() == 'EM':
-        pool = EMPool1d(kernel_size=(num_samplers))
+        pool = EMPool1d(kernel_size=(samplers))
     elif name.upper() == 'EDSCW':
-        pool = EDSCWPoll1d(kernel_size=(num_samplers))
+        pool = EDSCWPool1d(kernel_size=(samplers))
     elif name.upper() == 'IDW':
-        pool = IDWPool1d(kernel_size=(num_samplers))
+        pool = IDWPool1d(kernel_size=(samplers))
     elif name.upper() == 'ADA':
-        pool = AdaPool1d(kernel_size=(num_samplers), beta=(1))
+        pool = AdaPool1d(kernel_size=(samplers), beta=(1))
     else:
         logging.error("Pooling method '{}'' not implemented".format(name))
         raise NotImplementedError()
     return pool
+
+
+class Contiguous(torch.nn.Module):
+    def __init__(self):
+        super(Contiguous, self).__init__()
+
+    def forward(self,x):
+        return x.contiguous()
 
 
 class Combined(torch.nn.Module):
@@ -231,8 +239,10 @@ class Combined(torch.nn.Module):
 
         if pool is not None:
             pool = get_pooling(pool, samplers=self.samplers)
+            make_contiguous = Contiguous()
             self.pred_fusion = torch.nn.Sequential(
                                  Rearrange('b s c -> b c s'),
+                                 make_contiguous,
                                  pool,
                                  Rearrange('b c 1 -> b c')) if pool is not None else None
         else:

@@ -2,7 +2,7 @@
 debug_mode: True
 
 # visible video precentage
-video_per: .2
+video_per: .4
 dataset:  UCF-101
 precision: mixed
 data_dir: /media/m2ssd_2TB/UCF-101_videos
@@ -10,7 +10,6 @@ label_dir: /media/m2ssd_1TB/labels/UCF-101/split1
 pretrained_dir: ./pretrained_models/UCF-101/mtnet_xs.pth
 
 # GPU-device related parser arguments & number of workers
-gpus: [0,1]
 workers: 8
 
 # set batch size
