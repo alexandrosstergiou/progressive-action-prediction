@@ -232,7 +232,7 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 # main class
-class TemPer_h(nn.Module):
+class TemPr_h(nn.Module):
     def __init__(
         self,
         *,
@@ -409,14 +409,14 @@ if __name__ == "__main__":
 
     #--- TEST 1 --- (train -- fp32)
     tmp = torch.rand(64,512,depth,16,4,4).cuda()
-    net = torch.nn.DataParallel(TemPer_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
+    net = torch.nn.DataParallel(TemPr_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
     out = net(tmp)
     print('--- TEST 1 (train -- fp32) passed ---','input:',tmp.shape,'exited the network with new shape:',out.shape,'\n')
     del out, net, tmp
 
     #--- TEST 2 --- (inference -- fp32)
     tmp = torch.rand(64,512,depth,16,4,4).cuda()
-    net = torch.nn.DataParallel(TemPer_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
+    net = torch.nn.DataParallel(TemPr_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
     with torch.no_grad():
         out = net(tmp)
     print('--- TEST 2 (inference -- fp32) passed ---','input:',tmp.shape,'exited the network with new shape:',out.shape,'\n')
@@ -424,21 +424,21 @@ if __name__ == "__main__":
 
     #--- TEST 3 --- (train -- mixed)
     tmp = torch.rand(128,512,depth,12,4,4).cuda().half()
-    net = torch.nn.DataParallel(TemPer_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
+    net = torch.nn.DataParallel(TemPr_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
     out = net(tmp)
     print('--- TEST 3 (mixed) passed ---','input:',tmp.shape,'exited the network with new shape:',out.shape,'\n')
     del out, net, tmp
 
     #--- TEST 4 --- (inference -- mixed)
     tmp = torch.rand(128,512,depth,12,4,4).cuda().half()
-    net = torch.nn.DataParallel(TemPer_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
+    net = torch.nn.DataParallel(TemPr_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, latent_dim = 256, latent_heads = 8).cuda())
     with torch.no_grad():
         out = net(tmp)
     print('--- TEST 4 (inference -- mixed) passed ---','input:',tmp.shape,'exited the network with new shape:',out.shape,'\n')
     del out, net, tmp
 
     tmp = (512,depth,16,4,4)
-    net = TemPer_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, num_latents=256, latent_dim = 256)
+    net = TemPr_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, num_latents=256, latent_dim = 256)
 
     macs, params = get_model_complexity_info(net, tmp, as_strings=True,print_per_layer_stat=False, verbose=False)
     print('-- TEST 5 passed --- ')
@@ -447,6 +447,6 @@ if __name__ == "__main__":
     print('\n')
 
     #--- TEST 6 --- summary
-    net = TemPer_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, num_latents=256, latent_dim = 256).cuda()
+    net = TemPr_h(num_freq_bands=10, depth=depth, max_freq=10., input_channels=512, num_latents=256, latent_dim = 256).cuda()
     summary(net, (8,512,depth,16,4,4))
     print('--- TEST 6 passed --- \n')

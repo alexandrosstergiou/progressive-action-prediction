@@ -7,7 +7,7 @@ coloredlogs.install()
 from .mtnet import MTNet_xs, MTNet_s, MTNet_m, MTNet_l, MTNet_xl, MTNet_xxl, MTNet_xs_g8, MTNet_s_g8, MTNet_m_g8, MTNet_l_g8
 from .srtg_resnet import r3d_18, r3d_34, r3d_50, r3d_101, r3d_152, r3d_200, r3dxt50_32x4d, r3dxt101_32x8d, wide_r3d50_2,wide_r3d101_2, r2plus1d_18, r2plus1d_34, r2plus1d_50, r2plus1d_101, r2plus1d_152, r2plus1d_200, r2plus1dxt50_32x4d, r2plus1dxt101_32x8d, wide_r2plus1d50_2,wide_r2plus1d101_2, srtg_r3d_18, srtg_r3d_34, srtg_r3d_50, srtg_r3d_101, srtg_r3d_152, srtg_r3d_200, srtg_r3dxt50_32x4d, srtg_r3dxt101_32x8d, srtg_wide_r3d50_2, srtg_wide_r3d101_2, srtg_r2plus1d_18, srtg_r2plus1d_34, srtg_r2plus1d_50, srtg_r2plus1d_101, srtg_r2plus1d_152, srtg_r2plus1d_200, srtg_r2plus1dxt50_32x4d, srtg_r2plus1dxt101_32x8d, srtg_wide_r2plus1d50_2, srtg_wide_r2plus1d101_2
 
-from .temper_h import TemPer_h
+from .tempr_h import TemPr_h
 
 from .config import get_config
 
@@ -63,9 +63,9 @@ def beautify_net(net):
 '''
 def get_symbol(name, samplers=4, pool=None, headless=False, **kwargs):
 
-    # TemPer_h
-    if ('TEMPER' in name.upper()):
-        net = TemPer_h(depth=samplers, return_acts=True, pool=pool, **kwargs)
+    # TemPr_h
+    if ('TEMPR' in name.upper()):
+        net = TemPr_h(depth=samplers, return_acts=True, pool=pool, **kwargs)
 
     # Multi-Temporal net
     elif "MTNET" in name.upper():
@@ -295,7 +295,7 @@ class Combined(torch.nn.Module):
 if __name__ == "__main__":
 
     net = Combined(backbone='mtnet_s',
-                   head='TemPer_h',
+                   head='TemPr_h',
                    pool='avg',
                    print_net=False,
                    num_samplers=4,

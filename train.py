@@ -117,7 +117,7 @@ parser.add_argument('--pretrained_dir', type=str,  default=None,
 
 parser.add_argument('--backbone', type=str, default='MTnet_xs',
                     help="chose the backbone architecture. See `network` dir for more info.")
-parser.add_argument('--head', type=str, default='Temper_h',
+parser.add_argument('--head', type=str, default='Tempr_h',
                     help="chose the head architecture. See `network` dir for more info.")
 
 parser.add_argument('--num_freq_bands', type=int, default = 10,
@@ -286,10 +286,11 @@ if __name__ == "__main__":
     # Make results directory for .csv files if it does not exist
     ratio = 'observation_ratio_'+str(args.video_per)
     samplers = 'samplers_'+str(args.num_samplers)
+    latents = 'latents_'+str(args.num_latents)
     if args.head:
-        results_path = os.path.join(args.results_dir,args.dataset,samplers,ratio,args.head+'_'+args.backbone+'_'+args.pool)
+        results_path = os.path.join(args.results_dir,args.dataset,latents,samplers,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     else:
-        results_path = os.path.join(args.results_dir,args.dataset,samplers,ratio,args.backbone+'_'+args.pool)
+        results_path = os.path.join(args.results_dir,args.dataset,latents,samplers,ratio,args.backbone+'_'+args.pool)
     if not os.path.exists(results_path):
         os.makedirs(results_path)
 
