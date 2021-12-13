@@ -209,7 +209,7 @@ class MetricPrinter(Callback):
                     val = Decimal(value)
                     str_out += "{} = {:.2e}".format(name,val)
                 else:
-                    str_out += "{} = {:.5f}".format(name, value)
+                    str_out += "{} = {:.4f}".format(name, value)
                 str_out += ", " if i != (len(namevals)-1) else " "
 
         if not silent:

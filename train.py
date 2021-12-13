@@ -286,7 +286,7 @@ if __name__ == "__main__":
     # Make results directory for .csv files if it does not exist
     ratio = 'observation_ratio_'+str(args.video_per)
     samplers = 'samplers_'+str(args.num_samplers)
-    latents = 'latents_'+str(args.num_latents)
+    latents = 'latents_'+str(args.num_latents)+'_heads_'+str(args.latent_heads)
     if args.head:
         results_path = os.path.join(args.results_dir,args.dataset,latents,samplers,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     else:
@@ -557,6 +557,10 @@ if __name__ == "__main__":
                                 metric.Accuracy(name="top5", topk=5),
                                 metric.BatchSize(name="batch_size"),
                                 metric.LearningRate(name="lr"))
+
+    sampler_metrics = metric.MetricList(metric.Loss(name="loss-ce"),
+                                metric.Accuracy(name="top1", topk=1),
+                                metric.Accuracy(name="top5", topk=5))
     # enable cudnn tune
     cudnn.benchmark = True
 
@@ -572,12 +576,14 @@ if __name__ == "__main__":
             long_short_steps_dir=iteration_steps,
             lr_scheduler=lr_scheduler,
             metrics=metrics,
+            sampler_metrics_list=[sampler_metrics for _ in range(args.num_samplers)],
             iter_per_epoch=num_steps,
             epoch_start=epoch_start,
             epoch_end=args.end_epoch,
             directory=results_path,
             precision=args.precision,
-            scaler=scaler)
+            scaler=scaler,
+            samplers=args.num_samplers)
 
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---

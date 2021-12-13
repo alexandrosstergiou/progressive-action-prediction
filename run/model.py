@@ -15,6 +15,8 @@ from . import callback
 
 import torch.cuda.amp as amp
 
+from einops import rearrange
+
 
 '''
 ===  S T A R T  O F  C L A S S  C S V W R I T E R ===
@@ -210,27 +212,37 @@ class static_model(object):
         if self.net.training:
             if precision=='mixed':
                 with amp.autocast():
-                    output = self.net(data)
+                    outputs = self.net(data)
             else:
-                output = self.net(data)
+                outputs = self.net(data)
         else:
             with torch.no_grad():
                 if precision=='mixed':
                     with amp.autocast():
-                        output = self.net(data)
+                        outputs = self.net(data)
                 else:
-                    output = self.net(data)
-        # Use (loss) criterion if specified
-        if hasattr(self, 'criterion') and self.criterion is not None and target is not None:
-            if precision=='mixed':
-                with amp.autocast():
-                    loss = self.criterion(output, target)
-            else:
-                loss = self.criterion(output, target)
+                    outputs = self.net(data)
+        # Check for tuple
+        if isinstance(outputs, tuple):
+            output = outputs[0]
+            outputs_list = rearrange(outputs[1], 'b s c -> s b c')
+            o_list = [output]+[o for o in outputs_list]
         else:
-            loss = None
+            outputs_list = []
 
-        return [output], [loss]
+        # Use (loss) criterion if specified
+        losses = []
+        for out in o_list:
+            if hasattr(self, 'criterion') and self.criterion is not None and target is not None:
+                if precision=='mixed':
+                    with amp.autocast():
+                        losses.append(self.criterion(out, target))
+                else:
+                    losses.append(self.criterion(out, target))
+            else:
+                loss = None
+
+        return o_list, losses
 '''
 ===  E N D  O F  C L A S S  S T A T I C M O D E L ===
 '''
@@ -341,12 +353,14 @@ class model(static_model):
             batch_shape=(24,16,224,224),
             workers=4,
             metrics=metric.Accuracy(topk=1),
+            sampler_metrics_list=[metric.Accuracy(topk=1) for _ in range(4)],
             iter_per_epoch=1000,
             epoch_start=0,
             epoch_end=10000,
             directory=None,
             precision='mixed',
             scaler=None,
+            samplers=4,
             **kwargs):
 
         # Check kwargs used
@@ -368,15 +382,21 @@ class model(static_model):
         self.step_callback.set_tot_epochs(epoch_end)
         self.step_callback.set_tot_batches(iter_per_epoch)
 
+        fieldnames = ['Epoch', 'Top1_cl', 'Top5_cl','Loss_cl']
+        for s in range(samplers):
+            fieldnames.append('Top1_samp_'+str(s))
+            fieldnames.append('Top5_samp_'+str(s))
+            fieldnames.append('Loss_samp_'+str(s))
+
         # Create files to write results to
         train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
-        train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+        train_writer = csv.DictWriter(train_file, fieldnames=fieldnames)
         # if file is empty write header
         if (os.stat(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start))).st_size == 0):
             train_writer.writeheader()
 
         val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
-        val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+        val_writer = csv.DictWriter(val_file, fieldnames=fieldnames)
         # if file is empty write header
         if (os.stat(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start))).st_size == 0):
             val_writer.writeheader()
@@ -392,10 +412,10 @@ class model(static_model):
 
             # Create files to write results to
             train_file = open(os.path.join(directory,'train_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
-            train_writer = csv.DictWriter(train_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+            train_writer = csv.DictWriter(train_file, fieldnames=fieldnames)
 
             val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
-            val_writer = csv.DictWriter(val_file, fieldnames=['Epoch', 'Top1', 'Top5','Loss'])
+            val_writer = csv.DictWriter(val_file, fieldnames=fieldnames)
 
 
             if (no_cycles):
@@ -408,15 +428,24 @@ class model(static_model):
 
 
             # values for writing average topk,loss per epoch
-            train_top1_sum = []
-            train_top5_sum = []
-            train_loss_sum = []
-            val_top1_sum = []
-            val_top5_sum = []
-            val_loss_sum = []
+            train_top1_sum = {'cl':[]}
+            train_top5_sum = {'cl':[]}
+            train_loss_sum = {'cl':[]}
+            val_top1_sum = {'cl':[]}
+            val_top5_sum = {'cl':[]}
+            val_loss_sum = {'cl':[]}
+            for k in range(samplers):
+                train_top1_sum['samp_'+str(k)] = []
+                train_top5_sum['samp_'+str(k)] = []
+                train_loss_sum['samp_'+str(k)] = []
+                val_top1_sum['samp_'+str(k)] = []
+                val_top5_sum['samp_'+str(k)] = []
+                val_loss_sum['samp_'+str(k)] = []
 
             # Reset all metrics
             metrics.reset()
+            for s_m in sampler_metrics_list:
+                s_m.reset()
             # change network `mode` to training to ensure weight updates.
             self.net.train()
             # Time variable definitions
@@ -538,7 +567,7 @@ class model(static_model):
                         # [backward]
                         optimiser.zero_grad()
                         sum_backward_elapse = time.time()
-                        for loss in losses:
+                        for loss in losses[:1]:
                             if precision=='mixed':
                                 scaler.scale(loss).backward()
                             else:
@@ -582,17 +611,31 @@ class model(static_model):
                         gc.collect()
 
                 # [evaluation] update train metric
-                metrics.update([output.data.cpu().float() for output in outputs],
+                metrics.update([outputs[0].data.cpu().float()],
                                target.cpu(),
-                               [loss.data.cpu() for loss in losses],
+                               [losses[0].data.cpu()],
                                lr,
                                batch_size)
 
-                # Append matrices to lists
+                # update train metrics for sampler
+                for s,s_m in enumerate(sampler_metrics_list):
+                    s_m.update([outputs[s+1].data.cpu().float()],
+                               target.cpu(),
+                               [losses[s+1].data.cpu()],
+                               lr,
+                               batch_size)
+
+                    # Append matrices
+                    sm = s_m.get_name_value()
+                    train_top1_sum['samp_'+str(s)].append(sm[1][0][1])
+                    train_top5_sum['samp_'+str(s)].append(sm[2][0][1])
+                    train_loss_sum['samp_'+str(s)].append(sm[0][0][1])
+
+                # Append matrices
                 m = metrics.get_name_value()
-                train_top1_sum.append(m[1][0][1])
-                train_top5_sum.append(m[2][0][1])
-                train_loss_sum.append(m[0][0][1])
+                train_top1_sum['cl'].append(m[1][0][1])
+                train_top5_sum['cl'].append(m[2][0][1])
+                train_loss_sum['cl'].append(m[0][0][1])
 
 
                 # timing each batch
@@ -621,15 +664,22 @@ class model(static_model):
             train_loaders = {}
             active_batches = {}
 
-            l = len(train_top1_sum)
-            train_top1_sum = sum(train_top1_sum)/l
-            train_top5_sum = sum(train_top5_sum)/l
-            train_loss_sum = sum(train_loss_sum)/l
-            train_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(train_top1_sum), 'Top5':str(train_top5_sum),'Loss':str(train_loss_sum)})
-            logging.info('Epoch [{:d}]  (train)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss: {:.5f}'.format(i_epoch,train_top1_sum,train_top5_sum,train_loss_sum))
+            l = len(train_top1_sum['cl'])
+            row = {'Epoch':str(i_epoch)}
+            for key in train_top1_sum.keys():
+                train_top1_sum[key] = sum(train_top1_sum[key])/l
+                row['Top1_'+key] = str(train_top1_sum[key])
+                train_top5_sum[key] = sum(train_top5_sum[key])/l
+                row['Top5_'+key] = str(train_top5_sum[key])
+                train_loss_sum[key] = sum(train_loss_sum[key])/l
+                row['Loss_'+key] = str(train_loss_sum[key])
+
+            reordered_row = {k: row[k] for k in fieldnames}
+            train_writer.writerow(reordered_row)
+            logging.info('Epoch [{:d}]  (train)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss: {:.5f}'.format(i_epoch,train_top1_sum['cl'],train_top5_sum['cl'],train_loss_sum['cl']))
 
             # Evaluation happens here
-            if (eval_iter is not None) and ((i_epoch+1) % max(1, int(self.save_checkpoint_freq/2))) == 0:
+            if (eval_iter is not None):
                 logging.info("Start evaluating epoch {:d}:".format(i_epoch))
                 metrics.reset()
                 self.net.eval()
@@ -650,11 +700,28 @@ class model(static_model):
 
                     sum_forward_elapse = time.time() - sum_forward_elapse
 
-                    metrics.update([output.data.cpu().float() for output in outputs],
+                    metrics.update([outputs[0].data.cpu().float()],
                                     target.cpu(),
-                                   [loss.data.cpu() for loss in losses])
+                                   [losses[0].data.cpu()])
 
+                    # update train metrics for sampler
+                    for s,s_m in enumerate(sampler_metrics_list):
+                        s_m.update([outputs[s+1].data.cpu().float()],
+                                   target.cpu(),
+                                   [losses[s+1].data.cpu()])
+
+                        # Append matrices
+                        sm = s_m.get_name_value()
+                        val_top1_sum['samp_'+str(s)].append(sm[1][0][1])
+                        val_top5_sum['samp_'+str(s)].append(sm[2][0][1])
+                        val_loss_sum['samp_'+str(s)].append(sm[0][0][1])
+
+                    # Append matrices
                     m = metrics.get_name_value()
+                    val_top1_sum['cl'].append(m[1][0][1])
+                    val_top5_sum['cl'].append(m[2][0][1])
+                    val_loss_sum['cl'].append(m[0][0][1])
+
 
                     # Append rates
                     '''
@@ -666,16 +733,12 @@ class model(static_model):
                         accurac_dict[label] = {'acc':m[1][0][1] , 'num':1}
                     '''
 
-                    val_top1_sum.append(m[1][0][1])
-                    val_top5_sum.append(m[2][0][1])
-                    val_loss_sum.append(m[0][0][1])
-
                     sum_sample_inst += data.shape[0]
 
                     if (i_batch%50 == 0):
-                        val_top1_avg = sum(val_top1_sum)/(i_batch+1)
-                        val_top5_avg = sum(val_top5_sum)/(i_batch+1)
-                        val_loss_avg = sum(val_loss_sum)/(i_batch+1)
+                        val_top1_avg = sum(val_top1_sum['cl'])/(i_batch+1)
+                        val_top5_avg = sum(val_top5_sum['cl'])/(i_batch+1)
+                        val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
                         logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
 
                 #for label in accurac_dict.keys():
@@ -692,11 +755,18 @@ class model(static_model):
                 self.callback_kwargs['namevals'] = metrics.get_name_value()
                 self.step_end_callback()
 
-                l = len(val_top1_sum)
-                val_top1_avg = sum(val_top1_sum)/l
-                val_top5_avg = sum(val_top5_sum)/l
-                val_loss_avg = sum(val_loss_sum)/l
-                val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_avg), 'Top5':str(val_top5_avg),'Loss':str(val_loss_avg)})
+                l = len(val_top1_sum['cl'])
+                row = {'Epoch':str(i_epoch)}
+                for key in val_top1_sum.keys():
+                    val_top1_sum[key] = sum(val_top1_sum[key])/l
+                    row['Top1_'+key] = str(val_top1_sum[key])
+                    val_top5_sum[key] = sum(val_top5_sum[key])/l
+                    row['Top5_'+key] = str(val_top5_sum[key])
+                    val_loss_sum[key] = sum(val_loss_sum[key])/l
+                    row['Loss_'+key] = str(val_loss_sum[key])
+
+                reordered_row = {k: row[k] for k in fieldnames}
+                val_writer.writerow(row)
                 logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_avg,val_top5_avg,val_loss_avg))
 
                 # Save best model (regardless of `save_frequency`)
