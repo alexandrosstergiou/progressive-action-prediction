@@ -176,7 +176,6 @@ def autofill(args, parser):
 
     # customized
     if args.log_file is None:
-        print('LOG FILE NOT INITIALISED')
         if not os.path.exists("logs"):
             os.makedirs("logs")
         now = datetime.datetime.now()
@@ -230,7 +229,10 @@ if __name__ == "__main__":
     args.val_frame_interval = [int(i) for i in args.val_frame_interval]
 
     # must set visible devices BEFORE importing torch
-    os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1]
+    if (len(args.gpus) == 1):
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus[0])
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1]
     logging.info('CUDA_VISIBLE_DEVICES set to '+os.environ["CUDA_VISIBLE_DEVICES"])
 
     # import torch
@@ -584,6 +586,35 @@ if __name__ == "__main__":
             precision=args.precision,
             scaler=scaler,
             samplers=args.num_samplers)
+
+    # Create custom loaders for train and validation
+    eval_loader = iterator_factory.create(
+        return_train=False,
+        return_video_path=True,
+        data_dir=args.data_dir ,
+        labels_dir=args.label_dir ,
+        video_per_val=val_per,
+        num_samplers=args.num_samplers,
+        batch_size=1,
+        clip_length=clip_length,
+        clip_size=clip_size,
+        val_clip_length=clip_length,
+        val_clip_size=clip_size,
+        include_timeslices = dataset_cfg['include_timeslices'],
+        val_interval=args.frame_interval,
+        mean=input_conf['mean'],
+        std=input_conf['std'],
+        seed=iter_seed,
+        num_workers=args.workers)
+
+    # Main inference happens here (post-training)
+    net.inference(eval_iter=eval_loader,
+                  save_directory=results_path,
+                  workers=args.workers,
+                  metrics=sampler_metrics,
+                  sampler_metrics_list=[sampler_metrics for _ in range(args.num_samplers)],
+                  precision=args.precision,
+                  samplers=args.num_samplers)
 
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---

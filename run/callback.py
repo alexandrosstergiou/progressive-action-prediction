@@ -42,11 +42,17 @@ class Callback(object):
 
     def header(self, epoch=None, batch=None):
         str_out = ""
+        proceeding_zeros = len(str(self.total_epochs)) - len(str(epoch))
+        if proceeding_zeros>0:
+            epoch = ("0"*proceeding_zeros)+str(epoch)
+        proceeding_zeros = len(str(self.total_batches)) - len(str(batch))
+        if proceeding_zeros>0:
+            batch = ("0"*proceeding_zeros)+str(batch)
         if self.with_header:
             if epoch is not None:
-                str_out += "Epoch {:s} ".format(("[%d/%d]"%(epoch,self.total_epochs)).ljust(5, ' '))
+                str_out += "Epoch {:s} ".format(("[%s/%d]"%(epoch,self.total_epochs)).ljust(5, ' '))
             if batch is not None:
-                str_out += "Batch {:s} ".format(("[%d/%d]"%(batch,self.total_batches)).ljust(6, ' '))
+                str_out += "Batch {:s} ".format(("[%s/%d]"%(batch,self.total_batches)).ljust(6, ' '))
         return str_out
 '''
 ===  E N D  O F  C L A S S  C A L L B A C K ===
@@ -159,10 +165,10 @@ class SpeedMonitor(Callback):
                         backward= '\033[92m' +'{0:.2e}'.format(Decimal(backward_freq)) + '\033[0m'
 
                     # Print read speed, forward speed and backward speed for a batch (training)
-                    str_out += "Speed (r={0} f={1} b={2}) clip/sec ".format(read, forward, backward)
+                    str_out += "Speed (r : {0} f : {1} b : {2}) clip/sec ".format(read, forward, backward)
                 else:
                     # Print read speed, forward speed for a batch (validation)
-                    str_out += "Speed (r={0} f={1}) clip/sec ".format(read, forward)
+                    str_out += "Speed (r : {0} f : {1}) clip/sec ".format(read, forward)
 
         if not silent:
             logging.info(str_out)
@@ -199,17 +205,17 @@ class MetricPrinter(Callback):
         str_out = self.header(epoch, batch)
         if namevals is not None:
             for i, nameval in enumerate(namevals):
-                name, value = nameval[0]
+                name, inst, value = nameval[0]
                 # Skip None values (mainly for batch and LR in validations)
                 if (value is None):
                     continue
                 if (name=='batch_size'):
-                    str_out += "{} = ({:3d},{:1d},{:1d},{:2d},{:3d},{:3d})".format(name,*value)
+                    str_out += "{} : ({:3d},{:1d},{:1d},{:2d},{:3d},{:3d})".format('batch size',*value)
                 elif (name=='lr'):
                     val = Decimal(value)
-                    str_out += "{} = {:.2e}".format(name,val)
+                    str_out += "{} : {:.2e}".format(name,val)
                 else:
-                    str_out += "{} = {:.4f}".format(name, value)
+                    str_out += "{} : {:.4f}".format(name, value)
                 str_out += ", " if i != (len(namevals)-1) else " "
 
         if not silent:

@@ -63,6 +63,7 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
              mean=[0.485, 0.456, 0.406],
              std=[0.229, 0.224, 0.225],
              seed=torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
+             return_video_path=False,
              **kwargs):
 
     logging.debug("VideoIter:: clip_length = {}, interval = [train: {}, val: {}], seed = {}".format( \
@@ -82,6 +83,7 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
                           csv_filepath=os.path.join(labels_dir, 'train.csv'),
                           video_per=video_per_train,
                           num_samplers=num_samplers,
+                          return_video_path=return_video_path,
                           include_timeslices = include_timeslices,
                           sampler=train_sampler,
                           video_size=(clip_length,clip_size,clip_size),
@@ -126,6 +128,7 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
                     include_timeslices = include_timeslices,
                     video_per=video_per_val,
                     num_samplers=num_samplers,
+                    return_video_path=return_video_path,
                     sampler=val_sampler,
                     video_size=(16,256,256),
                     video_transform=transforms.Compose(

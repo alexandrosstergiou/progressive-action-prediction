@@ -110,7 +110,11 @@ class static_model(object):
     def load_state(self, state_dict, strict=False):
         # Strict mode that structure should match exactly
         if strict:
-            self.net.load_state(state_dict=state_dict)
+            missing_keys, unexpected_keys = self.net.load_state_dict(state_dict=state_dict, strict=False)
+            if not missing_keys:
+                logging.warning("Initialiser:: The following keys were missing: {}".format(missing_keys))
+            if not unexpected_keys:
+                logging.warning("Initialiser:: The following keys were not expected: {}".format(unexpected_keys))
         else:
             # Iteration over both state dicts
             n_state_dict_keys = list(self.net.state_dict().keys())
@@ -139,7 +143,7 @@ class static_model(object):
 
         return True
 
-    def load_checkpoint(self, path, epoch=None, optimiser=None):
+    def load_checkpoint(self, path, epoch=None, optimiser=None, strict=False):
         # model prefix needs to be defined for creating the checkpoint path
         assert self.model_prefix, "Undefined `model_prefix`"
         # check that file path exists
@@ -148,7 +152,7 @@ class static_model(object):
         checkpoint = torch.load(path)
 
         # Try to load `load_state` for `self.net` first
-        all_params_loaded = self.load_state(checkpoint['state_dict'], strict=False)
+        all_params_loaded = self.load_state(checkpoint['state_dict'], strict=strict)
 
         # Optimiser handling
         if optimiser:
@@ -449,7 +453,6 @@ class model(static_model):
             # change network `mode` to training to ensure weight updates.
             self.net.train()
             # Time variable definitions
-            sum_sample_inst = 0
             sum_read_elapse = 0.
             sum_forward_elapse = 0
             sum_backward_elapse = 0
@@ -627,20 +630,19 @@ class model(static_model):
 
                     # Append matrices
                     sm = s_m.get_name_value()
-                    train_top1_sum['samp_'+str(s)].append(sm[1][0][1])
-                    train_top5_sum['samp_'+str(s)].append(sm[2][0][1])
-                    train_loss_sum['samp_'+str(s)].append(sm[0][0][1])
+                    train_top1_sum['samp_'+str(s)].append(sm[1][0][2])
+                    train_top5_sum['samp_'+str(s)].append(sm[2][0][2])
+                    train_loss_sum['samp_'+str(s)].append(sm[0][0][2])
 
                 # Append matrices
                 m = metrics.get_name_value()
-                train_top1_sum['cl'].append(m[1][0][1])
-                train_top5_sum['cl'].append(m[2][0][1])
-                train_loss_sum['cl'].append(m[0][0][1])
+                train_top1_sum['cl'].append(m[1][0][2])
+                train_top5_sum['cl'].append(m[2][0][2])
+                train_loss_sum['cl'].append(m[0][0][2])
 
 
                 # timing each batch
                 epoch_speeds += [sum_read_elapse,sum_forward_elapse,sum_backward_elapse]
-                sum_sample_inst += data.shape[0]
 
                 if (i_batch % self.step_callback_freq) == 0:
                     # retrive eval results and reset metic
@@ -653,7 +655,6 @@ class model(static_model):
                     sum_read_elapse = 0.
                     sum_forward_elapse = 0.
                     sum_backward_elapse = 0.
-                    sum_sample_inst = 0.
                     # callbacks
                     self.step_end_callback()
 
@@ -685,8 +686,6 @@ class model(static_model):
                 self.net.eval()
                 sum_read_elapse = time.time()
                 sum_forward_elapse = 0.
-                sum_sample_inst = 0
-                #accurac_dict = {} # (!!!) In order to use a per-class accuracy ensure that the batch size is 1
 
                 for i_batch, (data, target) in enumerate(eval_iter):
 
@@ -712,28 +711,15 @@ class model(static_model):
 
                         # Append matrices
                         sm = s_m.get_name_value()
-                        val_top1_sum['samp_'+str(s)].append(sm[1][0][1])
-                        val_top5_sum['samp_'+str(s)].append(sm[2][0][1])
-                        val_loss_sum['samp_'+str(s)].append(sm[0][0][1])
+                        val_top1_sum['samp_'+str(s)].append(sm[1][0][2])
+                        val_top5_sum['samp_'+str(s)].append(sm[2][0][2])
+                        val_loss_sum['samp_'+str(s)].append(sm[0][0][2])
 
                     # Append matrices
                     m = metrics.get_name_value()
-                    val_top1_sum['cl'].append(m[1][0][1])
-                    val_top5_sum['cl'].append(m[2][0][1])
-                    val_loss_sum['cl'].append(m[0][0][1])
-
-
-                    # Append rates
-                    '''
-                    label = path[0].split('/')[-2]
-                    if label in accurac_dict:
-                        accurac_dict[label]['acc'] += m[1][0][1]
-                        accurac_dict[label]['num'] += 1
-                    else:
-                        accurac_dict[label] = {'acc':m[1][0][1] , 'num':1}
-                    '''
-
-                    sum_sample_inst += data.shape[0]
+                    val_top1_sum['cl'].append(m[1][0][2])
+                    val_top5_sum['cl'].append(m[2][0][2])
+                    val_loss_sum['cl'].append(m[0][0][2])
 
                     if (i_batch%50 == 0):
                         val_top1_avg = sum(val_top1_sum['cl'])/(i_batch+1)
@@ -741,13 +727,9 @@ class model(static_model):
                         val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
                         logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
 
-                #for label in accurac_dict.keys():
-                #    accurac_dict[label]['acc'] /= accurac_dict[label]['num']
-                    #logging.info(label +' accuracy: '+str(accurac_dict[label]['acc']))
-
-                # Save to dictionary
-                #with open(os.path.join(directory,'class_accuracies_ep{:04d}.json'.format(i_epoch)), 'w') as jsonf:
-                #    json.dump(accurac_dict, jsonf)
+                val_top1_avg = sum(val_top1_sum['cl'])/(i_batch+1)
+                val_top5_avg = sum(val_top5_sum['cl'])/(i_batch+1)
+                val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
 
                 # evaluation callbacks
                 self.callback_kwargs['read_elapse'] = sum_read_elapse / data.shape[0]
@@ -788,26 +770,35 @@ class model(static_model):
 
 
 
-        def inference(self,
-                      eval_iter=None,
-                      workers=4,
-                      metrics=metric.Accuracy(topk=1),
-                      precision='mixed',
-                      scaler=None,
-                      **kwargs):
+    def inference(self,
+                  eval_iter=None,
+                  save_directory=None,
+                  workers=4,
+                  metrics=metric.Accuracy(topk=1),
+                  sampler_metrics_list = [metric.Accuracy(topk=1) for _ in range(4)],
+                  precision='mixed',
+                  samplers=4,
+                  **kwargs):
 
-            logging.info("Start evaluating model")
+            logging.info("Running inference")
             metrics.reset()
             self.net.eval()
             sum_read_elapse = time.time()
             sum_forward_elapse = 0.
-            sum_sample_inst = 0
-            accurac_dict = {} # (!!!) In order to use a per-class accuracy ensure that the batch size is 1
+            accurac_dict = {} # (!!!) For per-class accuracy the batch size should be 1
 
-            for i_batch, (data, target) in enumerate(eval_iter):
+            val_top1_avg = {'cl':0}
+            val_top5_avg = {'cl':0}
+            val_loss_avg = {'cl':0}
+            for k in range(samplers):
+                val_top1_avg['samp_'+str(k)] = 0
+                val_top5_avg['samp_'+str(k)] = 0
+                val_loss_avg['samp_'+str(k)] = 0
+
+            for i_batch, (data, target, path) in enumerate(eval_iter):
+                label = path[0].split('/')[-2]
 
                 sum_read_elapse = time.time()
-                self.callback_kwargs['batch'] = i_batch
                 sum_forward_elapse = time.time()
 
                 # [forward] making next step
@@ -816,53 +807,71 @@ class model(static_model):
 
                 sum_forward_elapse = time.time() - sum_forward_elapse
 
-                metrics.update([output.data.cpu().float() for output in outputs],
+                metrics.update([outputs[0].data.cpu().float()],
                                 target.cpu(),
-                               [loss.data.cpu() for loss in losses])
+                               [losses[0].data.cpu()])
 
+                # update train metrics for sampler
+                for s,s_m in enumerate(sampler_metrics_list):
+                    s_m.update([outputs[s+1].data.cpu().float()],
+                               target.cpu(),
+                               [losses[s+1].data.cpu()])
+
+                    # Append matrices
+                    sm = s_m.get_name_value()
+                    val_top1_avg['samp_'+str(s)] = sm[1][0][2]
+                    val_top5_avg['samp_'+str(s)] = sm[2][0][2]
+                    val_loss_avg['samp_'+str(s)] = sm[0][0][2]
+
+                # Append matrices
                 m = metrics.get_name_value()
+                val_top1_avg['cl'] = m[1][0][2]
+                val_top5_avg['cl'] = m[2][0][2]
+                val_loss_avg['cl'] = m[0][0][2]
 
                 # Append rates
-
                 if label in accurac_dict:
-                    accurac_dict[target]['acc'] += m[1][0][1]
-                    accurac_dict[target]['num'] += 1
+                    accurac_dict[label]['TP'] += m[1][0][1]
+                    accurac_dict[label]['num'] += 1
                 else:
-                    accurac_dict[target] = {'acc':m[1][0][1] , 'num':1}
+                    accurac_dict[label] = {'TP':m[1][0][1] , 'num':1}
+                for s,s_m in enumerate(sampler_metrics_list):
+                    sm = s_m.get_name_value()
+                    sampler_id = 'samp_'+str(s)+'_TP'
+                    if sampler_id in accurac_dict[label].keys():
+                        accurac_dict[label][sampler_id] += sm[1][0][1]
+                    else:
+                        accurac_dict[label][sampler_id] = sm[1][0][1]
 
+                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.3f} | {:.3f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], val_top1_avg['cl'])
+                print(' '*(len(line)+20), end='\r')
+                print(line, end='\r')
 
-                val_top1_sum.append(m[1][0][1])
-                val_top5_sum.append(m[2][0][1])
-                val_loss_sum.append(m[0][0][1])
+            logging.info('Inference: average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(val_top1_avg['cl'],val_top5_avg['cl'],val_loss_avg['cl']))
+            for s,sm in enumerate(sampler_metrics_list):
+                logging.info('Inference: >> Sampler {} average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(s, val_top1_avg['samp_'+str(s)],val_top5_avg['samp_'+str(s)],val_loss_avg['samp_'+str(s)]))
 
-                sum_sample_inst += data.shape[0]
-
-                if (i_batch%10 == 0):
-                    val_top1_avg = sum(val_top1_sum)/(i_batch+1)
-                    val_top5_avg = sum(val_top5_sum)/(i_batch+1)
-                    val_loss_avg = sum(val_loss_sum)/(i_batch+1)
-                    logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
-
-            # evaluation callbacks
-            self.callback_kwargs['read_elapse'] = sum_read_elapse / data.shape[0]
-            self.callback_kwargs['forward_elapse'] = sum_forward_elapse / data.shape[0]
-            self.callback_kwargs['namevals'] = metrics.get_name_value()
-            self.step_end_callback()
-
-            l = len(val_top1_sum)
-            val_top1_avg = sum(val_top1_sum)/l
-            val_top5_avg = sum(val_top5_sum)/l
-            val_loss_avg = sum(val_loss_sum)/l
-            val_writer.writerow({'Epoch':str(i_epoch), 'Top1':str(val_top1_avg), 'Top5':str(val_top5_avg),'Loss':str(val_loss_avg)})
-            logging.info('Epoch [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,val_top1_avg,val_top5_avg,val_loss_avg))
 
             for label in accurac_dict.keys():
-                accurac_dict[label]['acc'] /= accurac_dict[label]['num']
-                logging.info(label +' accuracy: '+str(accurac_dict[label]['acc']))
+                accurac_dict[label]['acc'] = accurac_dict[label]['TP'] / accurac_dict[label]['num']
+                logging.info('Inference: Label: `{}` average accuracy: {:.5f} num:{}'.format(label,accurac_dict[label]['acc'],accurac_dict[label]['num']))
+                for s in range(samplers):
+                    accurac_dict[label]['samp_'+str(s)+'_acc'] = accurac_dict[label]['samp_'+str(s)+'_TP'] / accurac_dict[label]['num']
+
+            accurac_dict['acc_top1_cl'] = val_top1_avg['cl']
+            accurac_dict['acc_top5_cl'] = val_top5_avg['cl']
+            for s in range(samplers):
+                accurac_dict['acc_top1_samp_'+str(s)] = val_top1_avg['samp_'+str(s)]
+                accurac_dict['acc_top5_samp_'+str(s)] = val_top5_avg['samp_'+str(s)]
+
 
             # Save to dictionary
-            with open(os.path.join(directory,'class_accuracies.json'), 'w') as jsonf:
-                json.dump(accurac_dict, jsonf)
+            if not os.path.isdir(save_directory):
+                os.makedirs(save_directory)
+            with open(os.path.join(save_directory,'class_accuracies.json'), 'w') as jsonf:
+                json.dump(accurac_dict, jsonf,indent=4, sort_keys=True)
+
+            logging.info("--- Finished ---")
 
 '''
 ===  E N D  O F  C L A S S  M O D E L ===

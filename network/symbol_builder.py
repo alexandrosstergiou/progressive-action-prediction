@@ -237,6 +237,9 @@ class Combined(torch.nn.Module):
         self.backbone = get_symbol(backbone, samplers=self.samplers, headless =True, **kwargs)
         self.backbone.requires_grad_(False)
 
+        self.rarrange = torch.nn.Sequential(
+                             Rearrange('b s c -> s b c'))
+
         if pool is not None:
             pool = get_pooling(pool, samplers=self.samplers)
             make_contiguous = Contiguous()
@@ -279,14 +282,15 @@ class Combined(torch.nn.Module):
         x = rearrange(x, '(b s) c t h w -> b c s t h w',b=B)
         pred = rearrange(pred, '(b s) c -> b s c',b=B)
 
+
         if self.head is not None:
             pred = self.head(x)
             if self.pred_fusion is not None:
+                preds = pred
                 pred = self.pred_fusion(pred)
+                return (pred, preds)
             else:
-                pred_list = rearrange(pred_list, 's b c -> b c s')
-                pred = reduce(pred_list, 'b c s -> b c', 'mean')
-        return pred
+                return self.rarrange(pred)
 
 
 

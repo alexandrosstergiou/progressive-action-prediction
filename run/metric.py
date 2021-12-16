@@ -38,26 +38,30 @@ class EvalMetric(object):
 
     def reset(self):
         self.num_inst = 0
+        self.inst = 0.0
         self.sum_metric = 0.0
 
     def get(self):
+        # return (name, sum, avg(if avail.))
         # case that instances are 0 -> return NaN
         if self.num_inst == 0:
-            return (self.name, float('nan'))
+            return (self.name, float('nan'), float('nan'))
         # case that instances are 1 -> return their sum
         if self.num_inst == 1:
-            return(self.name, self.sum_metric)
+            return(self.name, self.inst, self.sum_metric)
         # case that instances are >1 -> return average
         else:
-            return (self.name, self.sum_metric / self.num_inst)
+            return (self.name, self.inst, self.sum_metric / self.num_inst)
 
     def get_name_value(self):
-        name, value = self.get()
+        name, value, avg_value = self.get()
         if not isinstance(name, list):
             name = [name]
         if not isinstance(value, list):
             value = [value]
-        return list(zip(name, value))
+        if not isinstance(avg_value, list):
+            avg_value = [avg_value]
+        return list(zip(name, value, avg_value))
 
     def check_label_shapes(self, preds, labels):
         # raise if the shape is inconsistent
@@ -168,7 +172,8 @@ class Accuracy(EvalMetric):
 
             pred_topk = pred_topk.t()
             correct = pred_topk.eq(label.view(1, -1).expand_as(pred_topk))
-            self.sum_metric += float(correct.reshape(-1).float().sum(0, keepdim=True).numpy())
+            self.inst = float(correct.reshape(-1).float().sum(0, keepdim=True).numpy())
+            self.sum_metric += self.inst
             self.num_inst += label.shape[0]
 '''
 ===  E N D  O F  C L A S S  A C C U R A C Y  ===
@@ -201,7 +206,8 @@ class Loss(EvalMetric):
     def update(self, preds, labels, losses, lr, batch_size):
         assert losses is not None, "Loss undefined."
         for loss in losses:
-            self.sum_metric += float(loss.numpy().sum())
+            self.inst = float(loss.numpy().sum())
+            self.sum_metric += self.inst
             self.num_inst += 1
 '''
 ===  E N D  O F  C L A S S  L O S S  ===
@@ -233,6 +239,7 @@ class BatchSize(EvalMetric):
 
     def update(self, preds, labels, losses, lrs, batch_sizes):
         assert batch_sizes is not None, "Batch size undefined."
+        self.inst = batch_sizes
         self.sum_metric = batch_sizes
         self.num_inst = 1
 '''
@@ -265,6 +272,7 @@ class LearningRate(EvalMetric):
 
     def update(self, preds, labels, losses, lrs, batch_sizes):
         assert lrs is not None, "Learning rate undefined."
+        self.inst = lrs[-1]
         self.sum_metric = lrs[-1]
         self.num_inst = 1
 '''

@@ -11,8 +11,6 @@ import coloredlogs, logging
 coloredlogs.install()
 import argparse
 import yaml
-import math
-import imgaug
 import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -66,6 +64,8 @@ parser.add_argument('--data_dir', default='data/',
                     help="path for the video files \n ---- Note that the allowed formats are: ---- \n -> video (.mp4, .mpeg, .avi) \n -> image (.jpg, .jpeg, .png) \n -> SQL with frames encoded as BLOBs (.sql) \n See advice in the README about the directory structure.")
 parser.add_argument('--label_dir', default='labels/',
                     help="path for the label files associated with the dataset.")
+parser.add_argument('--json_dir', default='./results',
+                    help="folder to save the .JSON file with per-label per-sampler accuracies.")
 
 # training and validation params parser arguments
 parser.add_argument('--precision', default='fp32', choices=['fp32','mixed'],
@@ -74,11 +74,11 @@ parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
 parser.add_argument('--frame_size', default=224,
                     help="define the (max) frame size of each input sample.")
-parser.add_argument('--val_frame_interval', type=int, default=[1,2],
+parser.add_argument('--frame_interval', type=int, default=[1,2],
                     help="define the sampling interval between frames.")
 
 # GPU-device related parser arguments
-parser.add_argument('--gpus', type=list, default=[0,1],
+parser.add_argument('--gpus', type=list, default=[0],
                     help="define gpu id(s).")
 
 # DL model parser arguments
@@ -87,7 +87,7 @@ parser.add_argument('--pretrained_dir', type=str,  default=None,
 
 parser.add_argument('--backbone', type=str, default='MTnet_s',
                     help="chose the backbone architecture. See `network` dir for more info.")
-parser.add_argument('--head', type=str, default='Temper_h',
+parser.add_argument('--head', type=str, default='Tempr_h',
                     help="chose the head architecture. See `network` dir for more info.")
 
 parser.add_argument('--num_freq_bands', type=int, default = 10,
@@ -135,23 +135,19 @@ parser.add_argument('--config', type=str, default=None,
 def autofill(args, parser):
     # fix for lr mult empty keys
     defaults = vars(parser.parse_args([]))
-    for key in defaults['lr_mult']:
-        if key not in args.lr_mult.keys():
-            args.lr_mult[key] = defaults['lr_mult'][key]
 
     # customized
-    if args.log_file is None:
-        print('LOG FILE NOT INITIALISED')
-        if not os.path.exists("logs"):
-            os.makedirs("logs")
-        now = datetime.datetime.now()
-        date = str(now.year) + '-' + str(now.month) + '-' + str(now.day)
-        args.log_file = "logs/{}_inference_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(), date)
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    now = datetime.datetime.now()
+    date = str(now.year) + '-' + str(now.month) + '-' + str(now.day)
+    args.log_file = "logs/{}_inference_at-{}_datetime_{}.log".format('video_pred', socket.gethostname(), date)
 
+    ratio = 'observation_ratio_'+str(args.video_per)
     if args.head:
-        args.model_dir = os.path.join(args.results_dir,args.head+'_'+args.backbone)
+        args.model_dir = os.path.join(args.json_dir,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     else:
-        args.model_dir = os.path.join(args.results_dir,args.backbone)
+        args.model_dir = os.path.join(args.json_dir,ratio,args.backbone)
 
 
     return args
@@ -191,7 +187,14 @@ if __name__ == "__main__":
     logging.info("Start training with args:\n" + json.dumps(vars(args), indent=4, sort_keys=True))
     # Set device states
     logging.info('CUDA availability: '+str(torch.cuda.is_available()))
-    os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1] # before using torch
+
+    # must set visible devices BEFORE importing torch
+    args.gpus = [int(i) for i in args.gpus]
+    if (len(args.gpus) == 1):
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus[0])
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1]
+
     logging.info('CUDA_VISIBLE_DEVICES set to '+os.environ["CUDA_VISIBLE_DEVICES"])
     assert torch.cuda.is_available(), "CUDA is not available. CUDA devices are required from this repo!"
     torch.manual_seed(args.random_seed)
@@ -227,8 +230,16 @@ if __name__ == "__main__":
                 criterion=torch.nn.CrossEntropyLoss().cuda(),
                 model_prefix=model_prefix,
                 step_callback_freq=1,
-                save_checkpoint_freq=1000)
+                save_checkpoint_freq=100000)
     net.net.cuda()
+
+    ratio = 'observation_ratio_'+str(args.video_per)
+    samplers = 'samplers_'+str(args.num_samplers)
+    latents = 'latents_'+str(args.num_latents)+'_heads_'+str(args.latent_heads)
+    if args.head:
+        results_path = os.path.join(args.json_dir,args.dataset,latents,samplers,ratio,args.head+'_'+args.backbone+'_'+args.pool)
+    else:
+        results_path = os.path.join(args.json_dir,args.dataset,latents,samplers,ratio,args.backbone+'_'+args.pool)
 
     # data iterator - randomisation based on date and time values
     iter_seed = torch.initial_seed() + 100
@@ -247,9 +258,10 @@ if __name__ == "__main__":
     # Create custom loaders for train and validation
     eval_loader = iterator_factory.create(
         return_train=False,
+        return_video_path=True,
         data_dir=args.data_dir ,
         labels_dir=args.label_dir ,
-        video_per_val=val_per,
+        video_per_val=args.video_per,
         num_samplers=args.num_samplers,
         batch_size=1,
         clip_length=clip_length,
@@ -257,7 +269,7 @@ if __name__ == "__main__":
         val_clip_length=clip_length,
         val_clip_size=clip_size,
         include_timeslices = dataset_cfg['include_timeslices'],
-        val_interval=args.val_frame_interval,
+        val_interval=args.frame_interval,
         mean=input_conf['mean'],
         std=input_conf['std'],
         seed=iter_seed,
@@ -265,36 +277,30 @@ if __name__ == "__main__":
 
     print()
 
-
-    # mixed or single precision based on argument parser
-    if args.precision=='mixed':
-        scaler = torch.cuda.amp.GradScaler()
-    else:
-        scaler=None
-
     # Create DataParallel wrapper
     net.net = torch.nn.DataParallel(net.net, device_ids=[gpu_id for gpu_id in (args.gpus)])
 
     # checkpoint loading
-    _, _ = net.load_checkpoint(path=args.pretrained_dir)
+    _, _ = net.load_checkpoint(path=args.pretrained_dir, strict=True)
 
 
     # define evaluation metric
     metrics = metric.MetricList(metric.Loss(name="loss-ce"),
                                 metric.Accuracy(name="top1", topk=1),
                                 metric.Accuracy(name="top5", topk=5))
-    # enable cudnn tune
-    cudnn.benchmark = True
 
-    logging.info('LRScheduler: The learning rate will change at steps: '+str([x*num_steps for x in args.lr_steps]))
+    sampler_metrics_list = [metric.MetricList(metric.Loss(name="loss-ce"),
+                                              metric.Accuracy(name="top1", topk=1),
+                                              metric.Accuracy(name="top5", topk=5)) for _ in range(args.num_samplers)]
 
     # Main training happens here
     net.inference(eval_iter=eval_loader,
+                  save_directory=results_path,
                   workers=args.workers,
                   metrics=metrics,
-                  iter_per_epoch=num_steps,
+                  sampler_metrics_list=sampler_metrics_list,
                   precision=args.precision,
-                  scaler=scaler)
+                  samplers=args.num_samplers)
 
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---

@@ -1,0 +1,24 @@
+
+debug_mode: True
+
+# visible video precentage
+video_per: .4
+dataset:  UCF-101
+precision: mixed
+data_dir: /media/m2ssd_2TB/UCF-101_videos
+label_dir: /media/m2ssd_1TB/labels/UCF-101/split1
+pretrained_dir: ./results/UCF-101/latents_512_heads_8/samplers_2/observation_ratio_0.4/Tempr_h_MTnet_xs_ada/Tempr_h_MTnet_xs_ada_best.pth
+
+# model params
+num_samplers: 2
+num_latents: 512
+
+# GPU-device related parser arguments & number of workers
+workers: 4
+gpus: [0]
+
+frame_size: 224
+backbone: MTnet_xs
+
+# pooling
+pool: ada

@@ -177,6 +177,7 @@ class FeedForward(nn.Module):
             nn.Linear(dim * mult, dim)
         )
 
+
     def forward(self, x):
         return self.net(x)
 
@@ -292,7 +293,7 @@ class TemPr_h(nn.Module):
         input_dim = fourier_channels + input_channels
 
         self.latents = nn.Parameter(torch.randn(num_latents, latent_dim))
-        torch.nn.init.kaiming_uniform(self.latents)
+        torch.nn.init.kaiming_uniform_(self.latents)
         self.num_classes = num_classes
 
         get_cross_attn = lambda: PreNorm(latent_dim, Attention(latent_dim, input_dim, heads = cross_heads, dim_head = cross_dim_head, dropout = attn_dropout), context_dim = input_dim)
@@ -328,9 +329,10 @@ class TemPr_h(nn.Module):
             ]))
 
         self.reduce = nn.Sequential(
+            #nn.Linear(latent_dim, input_dim),
             Reduce('s b n d -> s b d', 'mean'),
             Rearrange('s b d -> b s d'),
-            nn.LayerNorm(latent_dim),
+            nn.LayerNorm(latent_dim)
         ) if final_classifier_head else nn.Identity()
 
         self.fc = nn.Linear(latent_dim, self.num_classes) if final_classifier_head else nn.Identity()
@@ -375,14 +377,15 @@ class TemPr_h(nn.Module):
                 x_t = self_attn(x_t) + x_t
                 x_t = self_ff(x_t) + x_t
 
+            '''
             # Depth Transformer
             if i>0 :
-                x = depth_attn(x_t+x_prev)
-            else:
                 x = depth_attn(x_t)
+            else:
+                x = depth_attn(x_t)#+x_prev
             x = depth_ff(x)
-
-            x_list.append(x)
+            '''
+            x_list.append(x_t)
 
         # to logits
         x = self.reduce(torch.stack(x_list,dim=0))
