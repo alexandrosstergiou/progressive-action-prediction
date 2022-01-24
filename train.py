@@ -102,7 +102,7 @@ parser.add_argument('--weight_decay', type=float, default=1e-5,
 # storing parser arguments
 parser.add_argument('--results_dir', type=str, default="./results",
                     help="folder for logging accuracy and saving models.")
-parser.add_argument('--save_frequency', type=float, default=3,
+parser.add_argument('--save_frequency', type=float, default=30,
                     help="save once after N epochs.")
 parser.add_argument('--log_file', type=str, default=None,
                     help="set logging file.")
@@ -130,7 +130,7 @@ parser.add_argument('--latent_dim', type=int, default = 512,
                     help="latent dimension size.")
 parser.add_argument('--cross_heads', type=int, default = 1,
                     help = "number of cross-head attention layers.")
-parser.add_argument('--latent_heads', type=int, default = 8,
+parser.add_argument('--latent_heads', type=int, default = 1,
                     help= "number of latent head attention moduls.")
 parser.add_argument('--cross_dim_head', type=int, default = 64,
                     help="number of dimensions per cross attention head.")
@@ -143,7 +143,7 @@ parser.add_argument('--ff_dropout', type=float, default = 0.,
 parser.add_argument('--weight_tie_layers', type=bool, default = False,
                     help="whether to weight tie layers (optional).")
 
-parser.add_argument('--pool', type=str, default='avg', choices=['max','avg','em','edscw','idw','ada'],
+parser.add_argument('--pool', type=str, default='ada', choices=['max','avg','em','edscw','idw','ada'],
                     help='choice of pooling method to use for selection/fusion of frame features.')
 
 parser.add_argument('--workers', type=int, default=8,
@@ -601,12 +601,13 @@ if __name__ == "__main__":
         val_clip_length=clip_length,
         val_clip_size=clip_size,
         include_timeslices = dataset_cfg['include_timeslices'],
-        val_interval=args.frame_interval,
+        val_interval=args.val_frame_interval,
         mean=input_conf['mean'],
         std=input_conf['std'],
         seed=iter_seed,
         num_workers=args.workers)
 
+    '''
     # Main inference happens here (post-training)
     net.inference(eval_iter=eval_loader,
                   save_directory=results_path,
@@ -616,6 +617,7 @@ if __name__ == "__main__":
                   precision=args.precision,
                   samplers=args.num_samplers)
 
+    '''
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---
 '''

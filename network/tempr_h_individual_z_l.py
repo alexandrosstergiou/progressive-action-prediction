@@ -292,7 +292,7 @@ class TemPr_h(nn.Module):
         fourier_channels = (self.input_axis * ((num_freq_bands * 2) + 1)) if fourier_encode_data else 0
         input_dim = fourier_channels + input_channels
 
-        self.latents = nn.Parameter(torch.randn(num_latents, latent_dim))
+        self.latents = nn.Parameter(torch.randn(depth,num_latents, latent_dim))
         torch.nn.init.kaiming_uniform_(self.latents)
         self.num_classes = num_classes
 
@@ -359,15 +359,15 @@ class TemPr_h(nn.Module):
         data = rearrange(data, 's b ... d -> s b (...) d')
 
         # Repeat latents over batch dim
-        x_l = repeat(self.latents, 'n d -> b n d', b = b)
+        x_l = repeat(self.latents, 's n d -> b s n d', b = b)
+        x_l = rearrange(x_l, 'b s n d -> s b n d')
 
         # layers
         x_list = []
 
         # Main calls
         for i,(cross_attn, cross_ff, self_attns) in enumerate(self.layers):
-            x_t = x_l
-            x_prev = x_t
+            x_t = x_l[i]
             # Cross attention
             x_t = cross_attn(x_t, context = data[i], mask = mask) + x_t
             x_t = cross_ff(x_t) + x_t
@@ -377,7 +377,7 @@ class TemPr_h(nn.Module):
                 x_t = self_attn(x_t) + x_t
                 x_t = self_ff(x_t) + x_t
 
-            
+
             x_list.append(x_t)
 
         # to logits

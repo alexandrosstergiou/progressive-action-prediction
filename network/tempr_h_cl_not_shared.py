@@ -302,10 +302,7 @@ class TemPr_h(nn.Module):
         get_latent_attn = lambda: PreNorm(latent_dim, Attention(latent_dim, heads = latent_heads, dim_head = latent_dim_head, dropout = attn_dropout))
         get_latent_ff = lambda: PreNorm(latent_dim, FeedForward(latent_dim, dropout = ff_dropout))
 
-        get_depth_attn = lambda: PreNorm(latent_dim, Attention(latent_dim, heads = latent_heads, dim_head = latent_dim_head, dropout = attn_dropout))
-        get_depth_ff = lambda: PreNorm(latent_dim, FeedForward(latent_dim, dropout = ff_dropout))
-
-        get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff, get_depth_attn, get_depth_ff = map(cache_fn, (get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff, get_depth_attn, get_depth_ff))
+        get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff = map(cache_fn, (get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff))
 
         self.layers = nn.ModuleList([])
         for i in range(self.depth):
@@ -323,19 +320,13 @@ class TemPr_h(nn.Module):
             self.layers.append(nn.ModuleList([
                 get_cross_attn(**cache_args),
                 get_cross_ff(**cache_args),
-                self_attns#,
-                #get_depth_attn(**cache_args),
-                #get_depth_ff(**cache_args)
+                self_attns,
+                Reduce('b n d -> b d', 'mean')if final_classifier_head else nn.Identity(),
+                nn.Linear(latent_dim, self.num_classes) if final_classifier_head else nn.Identity()
             ]))
 
-        self.reduce = nn.Sequential(
-            #nn.Linear(latent_dim, input_dim),
-            Reduce('s b n d -> s b d', 'mean'),
-            Rearrange('s b d -> b s d'),
-            nn.LayerNorm(latent_dim)
-        ) if final_classifier_head else nn.Identity()
 
-        self.fc = nn.Linear(latent_dim, self.num_classes) if final_classifier_head else nn.Identity()
+        #self.fc = nn.Linear(latent_dim, self.num_classes)
 
 
     def forward(self, data, mask = None, return_embeddings = False):
@@ -365,7 +356,7 @@ class TemPr_h(nn.Module):
         x_list = []
 
         # Main calls
-        for i,(cross_attn, cross_ff, self_attns) in enumerate(self.layers):
+        for i,(cross_attn, cross_ff, self_attns, reduce, fc) in enumerate(self.layers):
             x_t = x_l
             x_prev = x_t
             # Cross attention
@@ -377,14 +368,14 @@ class TemPr_h(nn.Module):
                 x_t = self_attn(x_t) + x_t
                 x_t = self_ff(x_t) + x_t
 
-            
+            x_t = reduce(x_t)
+            x_t = fc(x_t)
             x_list.append(x_t)
 
-        # to logits
-        x = self.reduce(torch.stack(x_list,dim=0))
+        # to tensor
+        pred = torch.stack(x_list,dim=0)
+        pred = rearrange(pred, 's b d -> b s d')
 
-        # class predictions
-        pred = self.fc(x)
         # used for fetching embeddings
         if return_embeddings:
             return pred, x

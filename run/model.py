@@ -721,15 +721,12 @@ class model(static_model):
                     val_top5_sum['cl'].append(m[2][0][2])
                     val_loss_sum['cl'].append(m[0][0][2])
 
-                    if (i_batch%50 == 0):
-                        val_top1_avg = sum(val_top1_sum['cl'])/(i_batch+1)
-                        val_top5_avg = sum(val_top5_sum['cl'])/(i_batch+1)
-                        val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
-                        logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
+                    val_top1_avg = sum(val_top1_sum['cl'])/(i_batch+1)
+                    val_top5_avg = sum(val_top5_sum['cl'])/(i_batch+1)
+                    val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
 
-                val_top1_avg = sum(val_top1_sum['cl'])/(i_batch+1)
-                val_top5_avg = sum(val_top5_sum['cl'])/(i_batch+1)
-                val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
+                    if (i_batch%50 == 0):
+                        logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
 
                 # evaluation callbacks
                 self.callback_kwargs['read_elapse'] = sum_read_elapse / data.shape[0]
@@ -787,13 +784,13 @@ class model(static_model):
             sum_forward_elapse = 0.
             accurac_dict = {} # (!!!) For per-class accuracy the batch size should be 1
 
-            val_top1_avg = {'cl':0}
-            val_top5_avg = {'cl':0}
-            val_loss_avg = {'cl':0}
+            val_top1_sum = {'cl':[]}
+            val_top5_sum = {'cl':[]}
+            val_loss_sum = {'cl':[]}
             for k in range(samplers):
-                val_top1_avg['samp_'+str(k)] = 0
-                val_top5_avg['samp_'+str(k)] = 0
-                val_loss_avg['samp_'+str(k)] = 0
+                val_top1_sum['samp_'+str(k)] = []
+                val_top5_sum['samp_'+str(k)] = []
+                val_loss_sum['samp_'+str(k)] = []
 
             for i_batch, (data, target, path) in enumerate(eval_iter):
                 label = path[0].split('/')[-2]
@@ -819,22 +816,22 @@ class model(static_model):
 
                     # Append matrices
                     sm = s_m.get_name_value()
-                    val_top1_avg['samp_'+str(s)] = sm[1][0][2]
-                    val_top5_avg['samp_'+str(s)] = sm[2][0][2]
-                    val_loss_avg['samp_'+str(s)] = sm[0][0][2]
+                    val_top1_sum['samp_'+str(s)].append(sm[1][0][2])
+                    val_top5_sum['samp_'+str(s)].append(sm[2][0][2])
+                    val_loss_sum['samp_'+str(s)].append(sm[0][0][2])
 
                 # Append matrices
                 m = metrics.get_name_value()
-                val_top1_avg['cl'] = m[1][0][2]
-                val_top5_avg['cl'] = m[2][0][2]
-                val_loss_avg['cl'] = m[0][0][2]
+                val_top1_sum['cl'].append(m[1][0][2])
+                val_top5_sum['cl'].append(m[2][0][2])
+                val_loss_sum['cl'].append(m[0][0][2])
 
                 # Append rates
                 if label in accurac_dict:
                     accurac_dict[label]['TP'] += m[1][0][1]
                     accurac_dict[label]['num'] += 1
                 else:
-                    accurac_dict[label] = {'TP':m[1][0][1] , 'num':1}
+                    accurac_dict[label] = {'TP': m[1][0][1] , 'num':1}
                 for s,s_m in enumerate(sampler_metrics_list):
                     sm = s_m.get_name_value()
                     sampler_id = 'samp_'+str(s)+'_TP'
@@ -843,13 +840,13 @@ class model(static_model):
                     else:
                         accurac_dict[label][sampler_id] = sm[1][0][1]
 
-                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.3f} | {:.3f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], val_top1_avg['cl'])
+                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.3f} | {:.3f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], val_top1_sum['cl']/(i_batch + 1))
                 print(' '*(len(line)+20), end='\r')
                 print(line, end='\r')
 
-            logging.info('Inference: average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(val_top1_avg['cl'],val_top5_avg['cl'],val_loss_avg['cl']))
+            logging.info('Inference: average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(sum(val_top1_sum['cl'])/(i_batch+1),sum(val_top5_sum['cl'])/(i_batch+1),sum(val_loss_sum['cl'])/(i_batch+1)))
             for s,sm in enumerate(sampler_metrics_list):
-                logging.info('Inference: >> Sampler {} average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(s, val_top1_avg['samp_'+str(s)],val_top5_avg['samp_'+str(s)],val_loss_avg['samp_'+str(s)]))
+                logging.info('Inference: >> Sampler {} average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(s, sum(val_top1_sum['samp_'+str(s)])/(i_batch+1),sum(val_top5_sum['samp_'+str(s)])/(i_batch+1),sum(val_loss_sum['samp_'+str(s)])/(i_batch+1)))
 
 
             for label in accurac_dict.keys():
@@ -858,11 +855,11 @@ class model(static_model):
                 for s in range(samplers):
                     accurac_dict[label]['samp_'+str(s)+'_acc'] = accurac_dict[label]['samp_'+str(s)+'_TP'] / accurac_dict[label]['num']
 
-            accurac_dict['acc_top1_cl'] = val_top1_avg['cl']
-            accurac_dict['acc_top5_cl'] = val_top5_avg['cl']
+            accurac_dict['acc_top1_cl'] = sum(val_top1_sum['cl'])/len(val_top1_sum['cl'])
+            accurac_dict['acc_top5_cl'] = sum(val_top5_sum['cl'])/len(val_top5_sum['cl'])
             for s in range(samplers):
-                accurac_dict['acc_top1_samp_'+str(s)] = val_top1_avg['samp_'+str(s)]
-                accurac_dict['acc_top5_samp_'+str(s)] = val_top5_avg['samp_'+str(s)]
+                accurac_dict['acc_top1_samp_'+str(s)] = sum(val_top1_sum['samp_'+str(s)])/len(val_top1_sum['samp_'+str(s)])
+                accurac_dict['acc_top5_samp_'+str(s)] = sum(val_top5_sum['samp_'+str(s)])/len(val_top5_sum['samp_'+str(s)])
 
 
             # Save to dictionary
