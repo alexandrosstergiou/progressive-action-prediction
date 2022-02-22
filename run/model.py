@@ -689,13 +689,22 @@ class model(static_model):
 
                 for i_batch, (data, target) in enumerate(eval_iter):
 
-                    sum_read_elapse = time.time()
-                    self.callback_kwargs['batch'] = i_batch
-                    sum_forward_elapse = time.time()
+                    f_completed = False
+                    while not f_completed:
+                        try:
+                            sum_read_elapse = time.time()
+                            self.callback_kwargs['batch'] = i_batch
+                            sum_forward_elapse = time.time()
 
-                    # [forward] making next step
-                    torch.cuda.empty_cache()
-                    outputs, losses = self.forward(data, target, precision=precision)
+                            # [forward] making next step
+                            torch.cuda.empty_cache()
+                            outputs, losses = self.forward(data, target, precision=precision)
+                            f_completed = True
+
+                        except Exception as e:
+                            logging.info(e)
+                            logging.warning('Error in forward/backward: forward executed: {} , backward executed: {}'.format(forward,backward))
+
 
                     sum_forward_elapse = time.time() - sum_forward_elapse
 
@@ -775,6 +784,8 @@ class model(static_model):
                   sampler_metrics_list = [metric.Accuracy(topk=1) for _ in range(4)],
                   precision='mixed',
                   samplers=4,
+                  labels_dir=None,
+                  fp_topk=3,
                   **kwargs):
 
             logging.info("Running inference")
@@ -783,6 +794,10 @@ class model(static_model):
             sum_read_elapse = time.time()
             sum_forward_elapse = 0.
             accurac_dict = {} # (!!!) For per-class accuracy the batch size should be 1
+
+            # load json class ids to text
+            with open(os.path.join(labels_dir,'dictionary.json')) as f:
+                class_dict = json.load(f)
 
             val_top1_sum = {'cl':[]}
             val_top5_sum = {'cl':[]}
@@ -793,6 +808,7 @@ class model(static_model):
                 val_loss_sum['samp_'+str(k)] = []
 
             for i_batch, (data, target, path) in enumerate(eval_iter):
+
                 label = path[0].split('/')[-2]
 
                 sum_read_elapse = time.time()
@@ -832,15 +848,48 @@ class model(static_model):
                     accurac_dict[label]['num'] += 1
                 else:
                     accurac_dict[label] = {'TP': m[1][0][1] , 'num':1}
+
+                # Append False positives
+                if m[1][0][1] < 1:
+                    probs, indices = torch.topk(outputs[0].detach(), fp_topk)
+                    probs = probs.cpu().numpy()[0]
+                    indices = indices.cpu().numpy()[0]
+                    fp_labels = []
+                    for index in indices:
+                        for k,v in class_dict.items():
+                            if v == index:
+                                fp_labels.append(k)
+                                break
+                    if 'FP' in accurac_dict[label]:
+                        accurac_dict[label]['FP'][path[0].split('/')[-1]] = {str(fp_label) : float(prob) for (fp_label,prob) in zip(fp_labels,probs)}
+                    else:
+                        accurac_dict[label]['FP'] = {path[0].split('/')[-1] : {str(fp_label) : float(prob) for (fp_label,prob) in zip(fp_labels,probs)}}
+
                 for s,s_m in enumerate(sampler_metrics_list):
                     sm = s_m.get_name_value()
-                    sampler_id = 'samp_'+str(s)+'_TP'
+                    sampler_id = 'samp_'+str(s)
                     if sampler_id in accurac_dict[label].keys():
-                        accurac_dict[label][sampler_id] += sm[1][0][1]
+                        accurac_dict[label][sampler_id]['TP'] += sm[1][0][1]
                     else:
-                        accurac_dict[label][sampler_id] = sm[1][0][1]
+                        accurac_dict[label][sampler_id] = {'TP': sm[1][0][1]}
 
-                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.3f} | {:.3f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], val_top1_sum['cl']/(i_batch + 1))
+                    # Append False positives
+                    if sm[1][0][1] < 1:
+                        probs, indices = torch.topk(outputs[s+1].detach(), fp_topk)
+                        probs = probs.cpu().numpy()[0]
+                        indices = indices.cpu().numpy()[0]
+                        fp_labels = []
+                        for index in indices:
+                            for k,v in class_dict.items():
+                                if v == index:
+                                    fp_labels.append(k)
+                                    break
+                        if 'FP' in accurac_dict[label]['samp_'+str(s)].keys():
+                            accurac_dict[label]['samp_'+str(s)]['FP'][path[0].split('/')[-1]] = {str(fp_label) : float(prob) for (fp_label,prob) in zip(fp_labels,probs)}
+                        else:
+                            accurac_dict[label]['samp_'+str(s)]['FP'] = {path[0].split('/')[-1] : {str(fp_label) : float(prob) for (fp_label,prob) in zip(fp_labels,probs)}}
+
+                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.3f} | {:.3f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], sum(val_top1_sum['cl'])/(i_batch + 1))
                 print(' '*(len(line)+20), end='\r')
                 print(line, end='\r')
 
@@ -849,11 +898,23 @@ class model(static_model):
                 logging.info('Inference: >> Sampler {} average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(s, sum(val_top1_sum['samp_'+str(s)])/(i_batch+1),sum(val_top5_sum['samp_'+str(s)])/(i_batch+1),sum(val_loss_sum['samp_'+str(s)])/(i_batch+1)))
 
 
+            avg_class_accuracy = 0
+            avg_class_accuracy_samplers = [0 for _ in range(samplers)]
             for label in accurac_dict.keys():
                 accurac_dict[label]['acc'] = accurac_dict[label]['TP'] / accurac_dict[label]['num']
                 logging.info('Inference: Label: `{}` average accuracy: {:.5f} num:{}'.format(label,accurac_dict[label]['acc'],accurac_dict[label]['num']))
+                avg_class_accuracy += accurac_dict[label]['acc']
                 for s in range(samplers):
-                    accurac_dict[label]['samp_'+str(s)+'_acc'] = accurac_dict[label]['samp_'+str(s)+'_TP'] / accurac_dict[label]['num']
+                    accurac_dict[label]['samp_'+str(s)]['acc'] = accurac_dict[label]['samp_'+str(s)]['TP'] / accurac_dict[label]['num']
+                    avg_class_accuracy_samplers[s] += accurac_dict[label]['samp_'+str(s)]['acc']
+
+            logging.info('> Avg class accuracy: {:.5f}'.format(avg_class_accuracy/len(accurac_dict.keys())))
+            accurac_dict['acc_top1_class'] = avg_class_accuracy/len(accurac_dict.keys())
+            for s in range(samplers):
+                logging.info('>> Avg class accuracy for sampler `{}`: {:.5f}'.format(s,avg_class_accuracy_samplers[s]/len(accurac_dict.keys())))
+                accurac_dict['acc_top1_class_sampler_`{}`'.format(s)] = avg_class_accuracy_samplers[s]/len(accurac_dict.keys())
+
+
 
             accurac_dict['acc_top1_cl'] = sum(val_top1_sum['cl'])/len(val_top1_sum['cl'])
             accurac_dict['acc_top5_cl'] = sum(val_top5_sum['cl'])/len(val_top5_sum['cl'])

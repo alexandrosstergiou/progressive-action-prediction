@@ -54,6 +54,14 @@ def get_config(name):
     elif 'HACS' in name.upper():
         config['num_classes'] = 200
         config['include_timeslices'] = True
+    # Case 7: Something SOMETHING
+    elif 'SMTH' in name.upper():
+        if 'COARSE' in name.upper():
+            config['num_classes'] = 50
+            config['include_timeslices'] = False
+        else:
+            config['num_classes'] = 174
+            config['include_timeslices'] = False
     else:
         logging.error("Configs for dataset '{}'' not found/supported. See supported datasets in `train.py`".format(name))
         raise NotImplemented

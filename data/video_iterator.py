@@ -428,13 +428,16 @@ class VideoIter(data.Dataset):
             #logging.info(k,labels_dict[k],'number of examples:',num)
 
 
-        logging.info("VideoIter:: - Found and stored: {:d}/{:d} videos from csv file \n".format(found_videos, i))
+        logging.info("VideoIter:: - Found: {:d}/{:d} videos from csv file".format(found_videos, i))
 
 
         # Save dictionary if it does not already exists
         if not (os.path.exists(labels_dict_filepath)):
+            logging.info("VideoIter:: Dictionary saved at {} \n".format(labels_dict_filepath))
             with open(labels_dict_filepath,'w') as json_dict:
                 json.dump(labels_dict,json_dict)
+        else:
+            logging.info("VideoIter:: Found dict at: {} \n".format(labels_dict_filepath))
 
 
         return videos_dict

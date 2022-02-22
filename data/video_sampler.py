@@ -44,8 +44,8 @@ class RandomSampling(object):
         self.num = new_num
 
     def sampling(self, range_max, v_id=None, prev_failed=False):
-        assert range_max > 0, \
-            ValueError("range_max = {}".format(range_max))
+        if range_max < 1:
+            range_max = 1
         interval = self.rng.choice(self.interval)
         if self.num == 1:
             return [self.rng.choice(range(0, range_max))]
@@ -102,8 +102,8 @@ class SequentialSampling(object):
         self.num = int(new_num)
 
     def sampling(self, range_max, v_id, prev_failed=False):
-        assert range_max > 0, \
-            ValueError("range_max = {}".format(range_max))
+        if range_max < 1:
+            range_max = 1
         num = self.num
         interval = self.rng.choice(self.interval)
         frame_range = (num - 1) * interval + 1

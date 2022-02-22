@@ -72,7 +72,7 @@ parser.add_argument('--precision', default='fp32', choices=['fp32','mixed'],
                     help="switch between single (fp32)/mixed (fp16) precision.")
 parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
-parser.add_argument('--frame_size', default=224,
+parser.add_argument('--frame_size', default=(224,224),
                     help="define the (max) frame size of each input sample.")
 parser.add_argument('--frame_interval', type=int, default=[1,2],
                     help="define the sampling interval between frames.")
@@ -122,6 +122,11 @@ parser.add_argument('--workers', type=int, default=8,
 # YAML loader
 parser.add_argument('--config', type=str, default=None,
                     help="YAML configuration file to load parser arguments from.")
+
+
+# YAML loader
+parser.add_argument('--fp_topk', type=int, default=3,
+                    help="Number of class names and probs to display in false cases.")
 
 '''
 ---  S T A R T  O F  F U N C T I O N  A U T O F I L L  ---
@@ -201,7 +206,11 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(args.random_seed)
 
     clip_length = int(args.frame_len)
-    clip_size = int(args.frame_size)
+    clip_size = args.frame_size
+    if str(clip_size).isdigit():
+        clip_size = (int(clip_size),int(clip_size))
+    else:
+        clip_size = (int(clip_size[0]),int(clip_size[1]))
 
     # Assign values from kwargs
     model_prefix = args.model_dir
@@ -300,7 +309,8 @@ if __name__ == "__main__":
                   metrics=metrics,
                   sampler_metrics_list=sampler_metrics_list,
                   precision=args.precision,
-                  samplers=args.num_samplers)
+                  samplers=args.num_samplers,
+                  labels_dir = args.label_dir)
 
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---

@@ -68,7 +68,7 @@ parser.add_argument('--precision', default='fp32', choices=['fp32','mixed'],
                     help="switch between single (fp32)/mixed (fp16) precision.")
 parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
-parser.add_argument('--frame_size', default=224,
+parser.add_argument('--frame_size', default=(224,224),
                     help="define the (max) frame size of each input sample.")
 parser.add_argument('--train_frame_interval', default=[1,2,3,4], nargs='+',
                     help="define the sampling interval between frames.")
@@ -102,7 +102,7 @@ parser.add_argument('--weight_decay', type=float, default=1e-5,
 # storing parser arguments
 parser.add_argument('--results_dir', type=str, default="./results",
                     help="folder for logging accuracy and saving models.")
-parser.add_argument('--save_frequency', type=float, default=30,
+parser.add_argument('--save_frequency', type=float, default=60,
                     help="save once after N epochs.")
 parser.add_argument('--log_file', type=str, default=None,
                     help="set logging file.")
@@ -124,13 +124,13 @@ parser.add_argument('--num_freq_bands', type=int, default = 10,
                     help="choose the number of freq bands, with original value (2 * K + 1)")
 parser.add_argument('--max_freq', type=float, default = 10.,
                     help="choose the maximum frequency number.")
-parser.add_argument('--num_latents', type=int, default = 512,
+parser.add_argument('--num_latents', type=int, default = 256,
                     help="choose number of latents/induced set points/centroids (following terminology from the Perceiver/Set Transformer papers).")
 parser.add_argument('--latent_dim', type=int, default = 512,
                     help="latent dimension size.")
 parser.add_argument('--cross_heads', type=int, default = 1,
                     help = "number of cross-head attention layers.")
-parser.add_argument('--latent_heads', type=int, default = 1,
+parser.add_argument('--latent_heads', type=int, default = 8,
                     help= "number of latent head attention moduls.")
 parser.add_argument('--cross_dim_head', type=int, default = 64,
                     help="number of dimensions per cross attention head.")
@@ -253,7 +253,11 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(args.random_seed)
 
     clip_length = int(args.frame_len)
-    clip_size = int(args.frame_size)
+    clip_size = args.frame_size
+    if str(clip_size).isdigit():
+        clip_size = (int(clip_size),int(clip_size))
+    else:
+        clip_size = (int(clip_size[0]),int(clip_size[1]))
 
     # Assign values from kwargs
     model_prefix = args.model_dir
@@ -571,7 +575,7 @@ if __name__ == "__main__":
     # Main training happens here
     net.fit(train_iter=train_data,
             eval_iter=eval_loader,
-            batch_shape=(int(args.batch_size),int(clip_length),int(clip_size),int(clip_size)),
+            batch_shape=(int(args.batch_size),int(clip_length),int(clip_size[0]),int(clip_size[1])),
             workers=args.workers,
             no_cycles=(not(args.long_cycles) and not(args.short_cycles)),
             optimiser=optimiser,
