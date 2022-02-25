@@ -29,9 +29,10 @@ from . import video_sampler as sampler
         - data_dir: String containing the complete path of the dataset video files.
         - labels_dir: String containing the complete path of the label files.
         the parent path of where the dataset is. Defaults to `/media/user/disk0`.
-        - video_per: Float for the precentage of video frames used in prediction.
+        - video_per_train: Float for the precentage of video frames used in training. Defaults to .6.
+        - video_per_val: Float for the precentage of video frames used in inference. Defaults to .6.
         - clip_length: Integer for the number of frames to sample per video. Defaults to 8.
-        - clip_size: Integer for the width and height of the frames in the video. Defaults to 256.
+        - clip_size: Tuple for the width and height of the frames in the video. Defaults to (224,224).
         - val_clip_length: Integer for the number of frames in the validation clips. If None, they
         will be assigned the same as `clip_length`. Defaults to None.
         - val_clip_size: Integer for the width and height of the frames in the validation clips. If None, they
@@ -43,23 +44,24 @@ from . import video_sampler as sampler
         - std: list or Tuple of the per-channel standard deviation for frames. Used to normalise the values in range.
         It uses the ImageNet std by default. Defaults to [0.229, 0.224, 0.225].
         - seed: Integer for randomisation.
+        - return_video_path: Bool for returning the filepath string alongside the video. Used for inference. Defaults to False.
 
     [Returns]
         - Tuple for training VideoIter object and validation VideoIter object.
 '''
-def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
-             labels_dir=os.path.join('/media','user','disk0','labels','HACS'),
+def get_data(data_dir=os.path.join('data','UCF-101'),
+             labels_dir=os.path.join('data','UCF-101'),
              eval_only=False,
              video_per_train=.6,
              video_per_val=.6,
              num_samplers=4,
              clip_length=8,
-             clip_size=(256,256),
+             clip_size=(224,224),
              val_clip_length=None,
              val_clip_size=None,
              include_timeslices = True,
-             train_interval=[1,2,3,4],
-             val_interval=[2,3],
+             train_interval=[1,2],
+             val_interval=[1],
              mean=[0.485, 0.456, 0.406],
              std=[0.229, 0.224, 0.225],
              seed=torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
@@ -70,6 +72,8 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
                 clip_length, train_interval, val_interval, seed))
 
     if not eval_only:
+
+        # Use augmentations only for part of the data
         sometimes_aug = lambda aug: iaa.Sometimes(0.25, aug)
         sometimes_seq = lambda aug: iaa.Sometimes(0.75, aug)
 
@@ -154,10 +158,10 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
     if (val_clip_length is None and val_clip_size is None):
         return train
 
-    val_sampler   = sampler.SequentialSampling(num=clip_length,
-                                               interval=val_interval,
-                                               fix_cursor=True,
-                                               shuffle=True)
+    val_sampler = sampler.SequentialSampling(num=clip_length,
+                                             interval=val_interval,
+                                             fix_cursor=True,
+                                             shuffle=True)
 
     if clip_size[0]<224 or clip_size[1]<224:
         val = VideoIter(dataset_location=data_dir,
@@ -210,7 +214,6 @@ def get_data(data_dir=os.path.join('/media','user','disk0','data','HACS'),
     [Args]
         - batch_size: Integer for the size of each batch.
         - return_len: Boolean for returning the length of the dataset. Defaults to False.
-        - num_workers: Integer for the number of workers used for loading data from disk. Defaults to 24.
 
     [Returns]
         - Tuple for training VideoIter object and validation utils.data.DataLoader object.
@@ -222,13 +225,10 @@ def create(return_len=False, return_train=True, **kwargs):
         val_loader = torch.utils.data.DataLoader(val,
             batch_size=kwargs['batch_size'], shuffle=False,
             num_workers=kwargs['num_workers'], pin_memory=False)
-
         return val_loader
 
     dataset_iter = get_data(**kwargs)
-
     train,val = dataset_iter
-
     val_loader = torch.utils.data.DataLoader(val,
         batch_size=kwargs['batch_size'], shuffle=False,
         num_workers=kwargs['num_workers'], pin_memory=False)

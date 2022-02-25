@@ -17,6 +17,8 @@ import torch.cuda.amp as amp
 
 from einops import rearrange
 
+import collections
+
 
 '''
 ===  S T A R T  O F  C L A S S  C S V W R I T E R ===
@@ -86,10 +88,10 @@ class CSVWriter():
     [Methods]
 
         - __init__ : Class initialiser
-        - load_state :
-        - load_checkpoint :
-        - save_checkpoint :
-        - forward :
+        - load_state : Function for loading model state from `state_dict`. Results in a more flexible loading method where parts of keys such as [`module.`,`model.`,`backbone.`,`head.`] are not considered during loading.
+        - load_checkpoint : Function for loading model state, optimiser (if specified) and epoch number (if specified) from file.
+        - save_checkpoint : Function for saving model state, optimiser and number of epoch to `.pth` file.
+        - forward : Function for calculating categorical cross entropy.
 
 '''
 class static_model(object):
@@ -116,6 +118,7 @@ class static_model(object):
             if not unexpected_keys:
                 logging.warning("Initialiser:: The following keys were not expected: {}".format(unexpected_keys))
         else:
+            unused_keys = [key for key in state_dict.keys()]
             # Iteration over both state dicts
             n_state_dict_keys = list(self.net.state_dict().keys())
             for f_name, f_param in state_dict.items():
@@ -130,16 +133,26 @@ class static_model(object):
                     f_name_trim = f_name_trim.replace('head.','')
                     n_name_trim = n_name_trim.replace('head.','')
                     # Check if file param name does match (as a sub-string) to the network param
-                    if f_name_trim in n_name_trim:
+                    if f_name_trim == n_name_trim:
                         # Check if the shape of the parameters also match
                         if f_param.shape == n_param.shape:
+                            # Additional verbose
+                            #logging.info('Loaded weights for {} from {}'.format(n_name_trim,f_name_trim))
                             self.net.state_dict()[n_name].copy_(f_param.view(n_param.shape))
-                            n_state_dict_keys.remove(n_name)
+                            unused_keys.remove(f_name)
+                            try:
+                                n_state_dict_keys.remove(n_name)
+                            except Exception:
+                                logging.warning('Name {} not in param list'.format(n_name))
 
             # indicating missed keys
             if n_state_dict_keys:
                 logging.warning("Initialiser:: The following keys were not loaded: {}".format(n_state_dict_keys))
                 return False
+            # unused keys
+            if unused_keys:
+                logging.warning("Initialiser:: The following keys were not used: {}".format(unused_keys))
+
 
         return True
 
@@ -151,8 +164,17 @@ class static_model(object):
         # checkpoint loading
         checkpoint = torch.load(path)
 
+        for key in checkpoint['state_dict'].keys():
+            # For weights from non-DataParallel checkpoints
+            if 'module.' not in key:
+                new_key = 'module.'+key
+            else:
+                new_key = key
+            checkpoint['state_dict'] = collections.OrderedDict((new_key if k == key else k, v) for k, v in checkpoint['state_dict'].items())
+
         # Try to load `load_state` for `self.net` first
         all_params_loaded = self.load_state(checkpoint['state_dict'], strict=strict)
+
 
         # Optimiser handling
         if optimiser:
@@ -279,6 +301,7 @@ class static_model(object):
         - epoch_end_callback: Function for updating the Callbacks at the end of each epoch.
         - adjust_learning_rate: Function for adjusting the learning rate based on the iteration/epoch. Primarily used for circles.
         - fit: Main training loop. Performs both training and evaluation.
+        - inference: Function for running inference and obtaining statistics.
 
 '''
 class model(static_model):
@@ -771,11 +794,6 @@ class model(static_model):
 
         logging.info("--- Finished ---")
 
-
-
-
-
-
     def inference(self,
                   eval_iter=None,
                   save_directory=None,
@@ -897,7 +915,6 @@ class model(static_model):
             for s,sm in enumerate(sampler_metrics_list):
                 logging.info('Inference: >> Sampler {} average top-1 acc: {:.5f} average top-5 acc: {:.5f} average loss {:.5f}'.format(s, sum(val_top1_sum['samp_'+str(s)])/(i_batch+1),sum(val_top5_sum['samp_'+str(s)])/(i_batch+1),sum(val_loss_sum['samp_'+str(s)])/(i_batch+1)))
 
-
             avg_class_accuracy = 0
             avg_class_accuracy_samplers = [0 for _ in range(samplers)]
             for label in accurac_dict.keys():
@@ -913,8 +930,6 @@ class model(static_model):
             for s in range(samplers):
                 logging.info('>> Avg class accuracy for sampler `{}`: {:.5f}'.format(s,avg_class_accuracy_samplers[s]/len(accurac_dict.keys())))
                 accurac_dict['acc_top1_class_sampler_`{}`'.format(s)] = avg_class_accuracy_samplers[s]/len(accurac_dict.keys())
-
-
 
             accurac_dict['acc_top1_cl'] = sum(val_top1_sum['cl'])/len(val_top1_sum['cl'])
             accurac_dict['acc_top5_cl'] = sum(val_top5_sum['cl'])/len(val_top5_sum['cl'])

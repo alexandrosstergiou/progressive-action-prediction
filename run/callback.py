@@ -19,6 +19,8 @@ from decimal import Decimal
     [Methods]
 
         - __init__ : Class initialiser
+        - set_tot_epochs: Function for setting (in order to display) the total number of epochs.
+        - set_tot_batches: Function for setting (in order to display) the total number of batches.
         - __call__: Function that should be implemented based on the sub-class functionality. It will raise by
         default a `NotImplementedError` as the main functionality should be determed by the subclasses.
         - header: Function for appending the header (i.e. epoch # and batch #) to the output string.

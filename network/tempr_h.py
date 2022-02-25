@@ -8,9 +8,6 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Reduce, Rearrange
 
-
-# helpers
-
 def exists(val):
     return val is not None
 
@@ -42,108 +39,7 @@ def fourier_encode(x, max_freq, num_bands = 4):
     x = torch.cat((x, orig_x), dim = -1) # [T, H, W, T, (2 x num_bands)+1]
     return x
 
-'''
-if self.use_gates or self.use_soft_gating:
-    # Should aways exit at least at the final frame
-    if (i==self.depth-1):
-        gates_t += torch.ones((b), device=data.device)
-    else:
-        # Main gating functionality
-        gate = self.gates[i]
-        # First gate (no previous frame to concatenate)
-        if (i<1):
-            gates_t = gate(x_t)
-            # Main gating functionality
-        else:
-            x_cat = rearrange([x_t,x_prev], 'l b n d -> b n (d l)')
-            gates_t += gate(x_cat)
-    # Update the gate values
-    gs[i] = gates_t
-    # Fool profing
-    gates_t += gates_t
 
-
-if self.use_gates:
-# Gate values > 1 denote duplicates
-gs[gs>1.] *= 0.
-
-# zero-out temporal outputs
-gs = rearrange(gs, 't b -> t b 1 1')
-x_list = rearrange(x_list, 't b n d -> t b n d')
-x_list = x_list * gs
-# create tensor (can also use `sum` as reduction method)
-x = reduce(x_list, 't b n d -> b n d', 'max')
-
-if self.use_soft_gating:
-
-# Scale > 1. values back to 1
-gs = torch.pow(gs,0)
-
-# zero-out non informative frames
-gs = rearrange(gs, 't b -> t b 1 1')
-x_list = rearrange(x_list, 't b n d -> t b n d')
-x_list = x_list * gs
-
-
-if self.use_temporal_fusion or self.use_soft_gating:
-x_list = rearrange(x_list, 't b n d -> t b n d')
-if self.mode == 'max':
-    x = reduce(x_list, 't b n d -> b n d', 'max')
-elif self.mode == 'avg':
-    x = reduce(x_list, 't b n d -> b n d', 'mean')
-else:
-    n_dim = x_list[0].shape[-2]
-    x = rearrange(x_list, 't b n d -> b (n d) t')
-    if self.mode=='em':
-        x = empool1d(x,kernel_size=self.depth)
-    elif self.mode=='idw':
-        x = idwpool1d(x,kernel_size=self.depth)
-    elif self.mode=='edscw':
-        x = edscwpool1d(x,kernel_size=self.depth)
-    elif self.mode=='ada':
-        x = self.pool(x)
-    x = rearrange(x, 'b (n d) 1 -> b n d', n=n_dim)
-else:
-x = x_t
-'''
-
-'''
-class ExitingGate(nn.Module):
-    def __init__(self, latent_dim, thres=0.5):
-        super(ExitingGate, self).__init__()
-
-        self.sigmoid = nn.Sigmoid()
-
-        self.attn = PreNorm(latent_dim, Attention(latent_dim, heads = 4))
-
-        self.linear = nn.Sequential(
-            Reduce('b n d -> b d', 'mean'),
-            nn.LayerNorm(latent_dim),
-            nn.Linear(latent_dim, 1, bias=True))
-        self.thres = thres
-
-    def forward(self, x):
-
-        #if isinstance(x,list):
-        #    x = rearrange(x, 'l b n d -> b (l n) d') # concatenate over
-
-        #if (self.type == 'cross'):
-        #    x, x_prev = x
-        #    x = self.attn(x, context = x_prev, mask = None) + x
-        #else:
-        x = self.attn(x) + x
-
-        x = self.linear(x) # [B, 2N, D] => [B, 1]
-        x = rearrange(x, 'b 1 -> b')
-        x = self.sigmoid(x)
-        # Exit flag [0/1] for each element in batch nased on set `thres`
-        x[x >= self.thres] = 1
-        x[x < self.thres] = 0
-        # Case of first gate
-        return x
-'''
-
-# helper classes
 
 class PreNorm(nn.Module):
     def __init__(self, dim, fn, context_dim = None):
@@ -222,7 +118,7 @@ class Attention(nn.Module):
             mask = repeat(mask, 'b j -> (b h) () j', h = h)
             sim.masked_fill_(~mask, max_neg_value)
 
-        # attention, what we cannot get enough of
+        #! Use of stability (in case on Nans)
         #sim /= self.temp
         #sim = torch.clamp(sim, min=1e-8, max=1e+8)
         attn = self.stable_softmax(sim)
@@ -302,10 +198,7 @@ class TemPr_h(nn.Module):
         get_latent_attn = lambda: PreNorm(latent_dim, Attention(latent_dim, heads = latent_heads, dim_head = latent_dim_head, dropout = attn_dropout))
         get_latent_ff = lambda: PreNorm(latent_dim, FeedForward(latent_dim, dropout = ff_dropout))
 
-        get_depth_attn = lambda: PreNorm(latent_dim, Attention(latent_dim, heads = latent_heads, dim_head = latent_dim_head, dropout = attn_dropout))
-        get_depth_ff = lambda: PreNorm(latent_dim, FeedForward(latent_dim, dropout = ff_dropout))
-
-        get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff, get_depth_attn, get_depth_ff = map(cache_fn, (get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff, get_depth_attn, get_depth_ff))
+        get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff = map(cache_fn, (get_cross_attn, get_cross_ff, get_latent_attn, get_latent_ff))
 
         self.layers = nn.ModuleList([])
         for i in range(self.depth):
@@ -323,13 +216,10 @@ class TemPr_h(nn.Module):
             self.layers.append(nn.ModuleList([
                 get_cross_attn(**cache_args),
                 get_cross_ff(**cache_args),
-                self_attns#,
-                #get_depth_attn(**cache_args),
-                #get_depth_ff(**cache_args)
+                self_attns
             ]))
 
         self.reduce = nn.Sequential(
-            #nn.Linear(latent_dim, input_dim),
             Reduce('s b n d -> s b d', 'mean'),
             Rearrange('s b d -> b s d'),
             nn.LayerNorm(latent_dim)
@@ -377,7 +267,7 @@ class TemPr_h(nn.Module):
                 x_t = self_attn(x_t) + x_t
                 x_t = self_ff(x_t) + x_t
 
-            
+
             x_list.append(x_t)
 
         # to logits

@@ -1,0 +1,17 @@
+
+debug_mode: True
+
+# visible video precentage
+video_per: .3
+num_latents: 256
+dataset:  smthng-smthng_v2
+precision: mixed
+data_dir: ./data/20bn-something-something-v2/
+label_dir: ./labels/ssv2
+
+# GPU-device related parser arguments & number of workers
+workers: 8
+
+# set batch size
+batch_size: 64
+frame_size: [100, 176]

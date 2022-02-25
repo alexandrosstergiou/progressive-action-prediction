@@ -40,7 +40,11 @@ datasets = [ 'mini-Kinetics',
              'ActivityNet-v2',
              'NTU-RGB'
              'UCF-101',
-             'HMDB-51']
+             'HMDB-51',
+             'smthng-smthng_coarse',
+             'smthng-smthng_fine',
+             'smthng-smthng_sub21',
+             'smthng-smthng_v2']
 
 # Create main parser
 parser = argparse.ArgumentParser(description="PyTorch parser for early action prediction from videos")
@@ -58,7 +62,7 @@ parser.add_argument('--num_samplers', type=int, default=3,
                     help='number of video samplers. The window from which frames are sampled from will progressively increase based on `num_frames`*`s`/`num_samplers` for `s` in range(`num_samplers`).')
 
 # data loading parser arguments
-parser.add_argument('--dataset', default='HACS', choices=datasets,
+parser.add_argument('--dataset', default='UCF-101', choices=datasets,
                     help="name of the dataset")
 parser.add_argument('--data_dir', default='data/',
                     help="path for the video files \n ---- Note that the allowed formats are: ---- \n -> video (.mp4, .mpeg, .avi) \n -> image (.jpg, .jpeg, .png) \n -> SQL with frames encoded as BLOBs (.sql) \n See advice in the README about the directory structure.")
@@ -85,7 +89,7 @@ parser.add_argument('--gpus', type=list, default=[0],
 parser.add_argument('--pretrained_dir', type=str,  default=None,
                     help="load pretrained model from path. This can be used for either the backbone or head alone or both. Leave empty when training from scratch.")
 
-parser.add_argument('--backbone', type=str, default='MTnet_s',
+parser.add_argument('--backbone', type=str, default='r3d_18',
                     help="chose the backbone architecture. See `network` dir for more info.")
 parser.add_argument('--head', type=str, default='Tempr_h',
                     help="chose the head architecture. See `network` dir for more info.")

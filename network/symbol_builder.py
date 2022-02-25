@@ -5,7 +5,9 @@
 import coloredlogs, logging
 coloredlogs.install()
 from .mtnet import MTNet_xs, MTNet_s, MTNet_m, MTNet_l, MTNet_xl, MTNet_xxl, MTNet_xs_g8, MTNet_s_g8, MTNet_m_g8, MTNet_l_g8
-from .srtg_resnet import r3d_18, r3d_34, r3d_50, r3d_101, r3d_152, r3d_200, r3dxt50_32x4d, r3dxt101_32x8d, wide_r3d50_2,wide_r3d101_2, r2plus1d_18, r2plus1d_34, r2plus1d_50, r2plus1d_101, r2plus1d_152, r2plus1d_200, r2plus1dxt50_32x4d, r2plus1dxt101_32x8d, wide_r2plus1d50_2,wide_r2plus1d101_2, srtg_r3d_18, srtg_r3d_34, srtg_r3d_50, srtg_r3d_101, srtg_r3d_152, srtg_r3d_200, srtg_r3dxt50_32x4d, srtg_r3dxt101_32x8d, srtg_wide_r3d50_2, srtg_wide_r3d101_2, srtg_r2plus1d_18, srtg_r2plus1d_34, srtg_r2plus1d_50, srtg_r2plus1d_101, srtg_r2plus1d_152, srtg_r2plus1d_200, srtg_r2plus1dxt50_32x4d, srtg_r2plus1dxt101_32x8d, srtg_wide_r2plus1d50_2, srtg_wide_r2plus1d101_2
+from .resnet import r3d_18, r3d_34, r3d_50, r3d_101, r3d_152, r3d_200, r3dxt50_32x4d, r3dxt101_32x8d, wide_r3d50_2,wide_r3d101_2, r2plus1d_18, r2plus1d_34, r2plus1d_50, r2plus1d_101, r2plus1d_152, r2plus1d_200, r2plus1dxt50_32x4d, r2plus1dxt101_32x8d, wide_r2plus1d50_2,wide_r2plus1d101_2
+
+from .swin import get_swin_ssv2
 
 from .tempr_h import TemPr_h
 
@@ -21,11 +23,20 @@ from einops.layers.torch import Reduce, Rearrange
 from ptflops import get_model_complexity_info
 from torchinfo import summary
 
-
 import adapool_cuda
 from adaPool import IDWPool1d, EMPool1d, EDSCWPool1d, AdaPool1d
 
 
+
+'''
+---  S T A R T  O F  F U N C T I O N  B E A U TI F Y _ N E T ---
+    [About]
+        Function for creating a string to visualise the network modules.
+    [Args]
+        - net: torch.nn.module for the network to be visualised.
+    [Returns]
+        - None
+'''
 def beautify_net(net):
     converted = []
     net_string = str(net)
@@ -45,7 +56,9 @@ def beautify_net(net):
                 net_string = net_string.replace('('+n+')', '('+new_n+')')
     # beautify for readability
     print(net_string)
-
+'''
+---  E N D  O F  F U N C T I O N  B E A U TI F Y _ N E T ---
+'''
 
 
 '''
@@ -54,19 +67,21 @@ def beautify_net(net):
         Function for loading PyTorch models.
     [Args]
         - name: String for the backbone/head network name.
-        - print_net: Boolean for printing the architecture. Defaults to False.
-        - headless: Boolean for not using the classifer part of the network. Defaults to False.
+        - samplers: Integer for the number of scales.
+        - pool: String for the ensemble function to be used. Defaults to None.
+        - headless: Boolean for runing solely the feature extractor part of the model. Defaults to False.
     [Returns]
         - net: Module for the loaded Pytorch network.
-        - config: Dictionary that includes a `mean` and `std` terms spcifying the mean and standard deviation.
-                  See `network/config.py` for more info.
 '''
-def get_symbol(name, samplers=4, pool=None, headless=False, **kwargs):
+def get_symbol(name, samplers, pool=None, headless=False, **kwargs):
 
     # TemPr_h
     if ('TEMPR' in name.upper()):
         net = TemPr_h(depth=samplers, return_acts=True, pool=pool, **kwargs)
 
+    # Swin-B (ssv2)
+    elif "SWIN" in name.upper():
+        net = get_swin_ssv2(**kwargs)
     # Multi-Temporal net
     elif "MTNET" in name.upper():
         if "MTNET_XS" in name.upper():
@@ -139,49 +154,6 @@ def get_symbol(name, samplers=4, pool=None, headless=False, **kwargs):
             net = wide_r2plus1d50_2(**kwargs, return_acts=True)
         else:
             net = wide_r2plus1d101_2(**kwargs, return_acts=True)
-    # Res_net 3D + SRTG
-    elif "SRTG_R3D" in name.upper():
-        if "SRTG_R3D_18" in name.upper():
-            net = srtg_r3d_18(**kwargs, return_acts=True)
-        elif "SRTG_R3D_34" in name.upper():
-            net = srtg_r3d_34(**kwargs, return_acts=True)
-        elif "SRTG_R3D_50" in name.upper():
-            net = srtg_r3d_50(**kwargs, return_acts=True)
-        elif "SRTG_R3D_101" in name.upper():
-            net = srtg_r3d_101(**kwargs, return_acts=True)
-        elif "SRTG_R3D_152" in name.upper():
-            net = srtg_r3d_152(**kwargs, return_acts=True)
-        elif "SRTG_R3D_200" in name.upper():
-            net = srtg_r3d_200(**kwargs, return_acts=True)
-        elif "SRTG_R3DXT50" in name.upper():
-            net = srtg_r3dxt50_32x4d(**kwargs, return_acts=True)
-        elif "SRTG_R3DXT101" in name.upper():
-            net = srtg_r3dxt101_32x8d(**kwargs, return_acts=True)
-        elif "SRTG_WIDE_R3D50" in name.upper():
-            net = srtg_wide_r3d50_2(**kwargs, return_acts=True)
-        else:
-            net = srtg_wide_r3d101_2(**kwargs, return_acts=True)
-    elif "SRTG_R2PLUS1D" in name.upper():
-        if "SRTG_R2PLUS1D_18" in name.upper():
-            net = srtg_r2plus1d_18(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1D_34" in name.upper():
-            net = srtg_r2plus1d_34(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1D_50" in name.upper():
-            net = srtg_r2plus1d_50(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1D_101" in name.upper():
-            net = srtg_r2plus1d_101(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1D_152" in name.upper():
-            net = srtg_r2plus1d_152(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1D_200" in name.upper():
-            net = srtg_r2plus1d_200(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1DXT50" in name.upper():
-            net = srtg_r2plus1dxt50_32x4d(**kwargs, return_acts=True)
-        elif "SRTG_R2PLUS1DXT101" in name.upper():
-            net = srtg_r2plus1dxt101_32x8d(**kwargs, return_acts=True)
-        elif "SRTG_WIDE_R2PLUS1D50" in name.upper():
-            net = srtg_wide_r2plus1d50_2(**kwargs, return_acts=True)
-        else:
-            net = srtg_wide_r2plus1d101_2(**kwargs, return_acts=True)
     else:
         logging.error("network '{}'' not implemented".format(name))
         raise NotImplementedError()
@@ -191,6 +163,17 @@ def get_symbol(name, samplers=4, pool=None, headless=False, **kwargs):
 ---  E N D  O F  F U N C T I O N  G E T _ S Y M B O L ---
 '''
 
+
+'''
+---  S T A R T  O F  F U N C T I O N  G E T _ P O O L I N G ---
+    [About]
+        Function for loading PyTorch models.
+    [Args]
+        - name: String for the ensemble method to be used.
+        - samplers: Integer for the number of scales (to be used as kernel size).
+    [Returns]
+        - pool: Module corresponding to the ensemble method chosen.
+'''
 def get_pooling(name, samplers):
     if name.upper() == 'AVG':
         pool = torch.nn.AdaptiveAvgPool1d((1))
@@ -208,16 +191,63 @@ def get_pooling(name, samplers):
         logging.error("Pooling method '{}'' not implemented".format(name))
         raise NotImplementedError()
     return pool
+'''
+---  E N D  O F  F U N C T I O N  G E T _ P O O L I N G ---
+'''
 
 
+'''
+===  S T A R T  O F  C L A S S  C O N T I G U O U S ===
+
+    [About]
+
+        nn.Module helper class for converting tensors to contiguous memory.
+
+    [Init Args]
+
+        - None
+
+    [Methods]
+
+        - __init__ : Class initialiser
+        - forward: Function for operation calling.
+'''
 class Contiguous(torch.nn.Module):
     def __init__(self):
         super(Contiguous, self).__init__()
 
     def forward(self,x):
         return x.contiguous()
+'''
+===  E N D  O F  C L A S S  C O N T I G U O U S ===
+'''
 
 
+'''
+===  S T A R T  O F  C L A S S  C O M B I N E D ===
+
+    [About]
+
+        nn.Module class that combined the feature extractor (backbone), attention towers (head), and predictor aggregation function (pool).
+
+    [Init Args]
+
+        - backbone: String for the backbone feature extractor to be used.
+        - head: String for the model to be used as head. If `None`/None, no head network is used and the
+        predictions are made directly from the backbone. Defaults to None.
+        - pool: String for the ensemble function to aggregate together individual predictors. If None, then
+        the ouput will include prediction(s) over each scale in range of `num_samplers`. Defaults to None.
+        - print_net: Boolean for printing the network in a per-string format for each module/sub-module. Defaults
+        to False.
+        - num_samplers: Integer for the number of scales to be used. Defaults to 4.
+        - precision: [Depricated] String for using either `mixed` or `fp32` precision. This only applies
+        for the head network. You use this configuration by looking at lines #318-322. Defaults to `fp32`.
+
+    [Methods]
+
+        - __init__ : Class initialiser
+        - forward: Function for operation calling.
+'''
 class Combined(torch.nn.Module):
     def __init__(self,
                  backbone,
@@ -240,7 +270,7 @@ class Combined(torch.nn.Module):
         self.rarrange = torch.nn.Sequential(
                              Rearrange('b s c -> s b c'))
 
-        if pool is not None:
+        if pool is not 'none' and pool is not None:
             pool = get_pooling(pool, samplers=self.samplers)
             make_contiguous = Contiguous()
             self.pred_fusion = torch.nn.Sequential(
@@ -251,7 +281,7 @@ class Combined(torch.nn.Module):
         else:
             self.pred_fusion = None
 
-        if (head is not None):
+        if head!='none' and head is not None:
             self.head = get_symbol(head, samplers=self.samplers, **kwargs)
 
         # model printing
@@ -278,13 +308,18 @@ class Combined(torch.nn.Module):
         # feature pooling
         _, _, t, _, _ = x.shape
         x = F.adaptive_avg_pool3d(x, (t,4,4))
+
         # Rearrange features to [B S C' t 4 4] and predictions [B S C]
         x = rearrange(x, '(b s) c t h w -> b c s t h w',b=B)
         pred = rearrange(pred, '(b s) c -> b s c',b=B)
 
 
-        if self.head is not None:
+        if hasattr(self, 'head'):
+            # if self.precision=='mixed':
+            #with torch.cuda.amp.autocast():
             pred = self.head(x)
+            #else:
+            #pred = self.head(x)
             if self.pred_fusion is not None:
                 preds = pred
                 pred = self.pred_fusion(pred)
@@ -292,13 +327,18 @@ class Combined(torch.nn.Module):
             else:
                 return self.rarrange(pred)
 
+        return (pred.squeeze(1), pred)
+
+'''
+===  E N D  O F  C L A S S  C O M B I N E D ===
+'''
 
 
 
 
 if __name__ == "__main__":
 
-    net = Combined(backbone='mtnet_s',
+    net = Combined(backbone='swin',
                    head='TemPr_h',
                    pool='avg',
                    print_net=False,
@@ -306,4 +346,4 @@ if __name__ == "__main__":
                    t_dim=16).cuda()
     tmp = torch.rand([1, 4, 3, 16, 186, 186]).cuda()
     out = net(tmp)
-    print('Exited sucessfully',out.shape)
+    print('Exited sucessfully',out[0].shape)

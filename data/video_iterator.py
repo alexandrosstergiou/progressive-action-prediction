@@ -28,6 +28,8 @@ from einops import rearrange
 
     [Init Args]
         - vid_path: String that points to the video filepath
+        - video_transform: Any object of the video_transforms file, used for applying video transformations (see video_transforms.py file). Defaults to None.
+        - end_size: Tuple for the target video size in TxHxW format. Will interpolate the array if the output size from `__extract_frames_fast` is different than that of specified. Defaults to (16, 224, 224).
 
     [Methods]
         - __init__ : Class initialiser, takes as argument the video path string.
@@ -136,6 +138,7 @@ class Video(object):
         cur.close()
         con.close()
 
+        # Additional verbosity
         #print(self.video_path,frames.size())
         return frames
 
@@ -174,9 +177,13 @@ class Video(object):
     [Methods]
 
         - __init__ : Class initialiser
+        - size_setter: Sets `Video` object's `clip_size` parameter. Useful if multiggrid training is to be used.
+        - shuffle: Sets the random seed for video sampling.
         - getitem_array_from_video: Returns a numpy array containing the frames, an integer for the video label and the full video database path. The input to the function is the index of the video (corresponding to an element in the video_dict)
         - __getitem__ : Wrapper function for the getitem_array_from_video function. Can return either the numpy array of frames with also the curresponding lable in int format as well as the complete filepath of the video (if specified by the user)
-        - __len__ : Returning the length/size of the dataset
+        - remove_indices: remove items from the video indices array.
+        - __len__ : Returning the length/size of the dataset.
+        - indices_list: Return the list of video indices.
         - get_video_dict : Main function for creating the video dictionary. Taks as arguments the location of the dataset (directory) the filepath to the .CSV file containing the dataset info and a boolean variable named include_timeslices which is used in the instance that the video folders also include the time segments in their name (defualts to False).
 
 '''
@@ -398,7 +405,6 @@ class VideoIter(data.Dataset):
                 # Uncomment line for additional user feedback
                 #logging.warning("VideoIter:: >> cannot locate `{}'".format(video_path))
                 continue
-
 
             # Increase videos count and read number of frames
             else:

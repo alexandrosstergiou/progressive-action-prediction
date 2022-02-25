@@ -1,0 +1,22 @@
+
+debug_mode: True
+
+# visible video precentage
+video_per: .3
+dataset:  UCF-101
+precision: mixed
+data_dir: ./data/UCF-101_videos
+label_dir: ./labels/UCF-101/split1
+
+# model params
+num_samplers: 4
+num_latents: 256
+
+frame_size: 224
+
+# GPU-device related parser arguments & number of workers
+workers: 4
+gpus: [0]
+
+# pooling
+pool: ada

@@ -34,7 +34,11 @@ datasets = [ 'mini-Kinetics',
              'ActivityNet-v2',
              'NTU-RGB'
              'UCF-101',
-             'HMDB-51']
+             'HMDB-51',
+             'smthng-smthng_coarse',
+             'smthng-smthng_fine',
+             'smthng-smthng_sub21',
+             'smthng-smthng_v2']
 
 # Create main parser
 parser = argparse.ArgumentParser(description="PyTorch parser for early action prediction from videos")
@@ -115,7 +119,7 @@ parser.add_argument('--gpus', default=[0,1], nargs='+',
 parser.add_argument('--pretrained_dir', type=str,  default=None,
                     help="load pretrained model from path. This can be used for either the backbone or head alone or both. Leave empty when training from scratch.")
 
-parser.add_argument('--backbone', type=str, default='MTnet_xs',
+parser.add_argument('--backbone', type=str, default='r3d_18',
                     help="chose the backbone architecture. See `network` dir for more info.")
 parser.add_argument('--head', type=str, default='Tempr_h',
                     help="chose the head architecture. See `network` dir for more info.")
@@ -610,18 +614,6 @@ if __name__ == "__main__":
         std=input_conf['std'],
         seed=iter_seed,
         num_workers=args.workers)
-
-    '''
-    # Main inference happens here (post-training)
-    net.inference(eval_iter=eval_loader,
-                  save_directory=results_path,
-                  workers=args.workers,
-                  metrics=sampler_metrics,
-                  sampler_metrics_list=[sampler_metrics for _ in range(args.num_samplers)],
-                  precision=args.precision,
-                  samplers=args.num_samplers)
-
-    '''
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---
 '''
