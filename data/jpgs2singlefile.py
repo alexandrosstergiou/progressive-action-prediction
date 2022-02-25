@@ -1,7 +1,6 @@
 '''
 ---  I M P O R T  S T A T E M E N T S  ---
 '''
-from PIL import Image
 import os
 import numpy as np
 from array import array
