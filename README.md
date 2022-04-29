@@ -1,6 +1,12 @@
 # Progressive Early Action Prediction in PyTorch
 ### Code implementation for:
-- Temporal Progressive Attention for Early Action Prediction
+Temporal Progressive Attention for Early Action Prediction
+
+- <a href="https://alexandrosstergiou.github.io/project_pages/TemPr/index.html">[Project page]</a>
+
+- <a href="http://arxiv.org/abs/2204.13340">[ArXiv paper]</a>
+
+- <a href="https://youtu.be/rGR5tJUAFpc">[Video]</a>
 
 ![supported versions](https://img.shields.io/badge/python-3.x-brightgreen/?style=flat&logo=python&color=green)
 ![Library](https://img.shields.io/badge/library-PyTorch-blue/?style=flat&logo=pytorch&color=informational)
@@ -11,9 +17,6 @@
 Early prediction deals with inferring the ongoing action from partially-observed videos, typically at the outset of the video. We propose a bottleneck-based attention model that captures the evolution of the action through progressive sampling over fine-to-coarse scales. Our proposed __Tem__poral __Pr__ogressive (__TemPr__) model is composed of multiple attention towers, one for each progressive scale. The action prediction is then made through collective agreement considering individual confidences of these attention towers. Extensive experiments over four video datasets showcase state-of-the-art performance on the task of Early Action Prediction
 across a range of backbone architectures.
 We demonstrate the effectiveness and consistency of TemPr through detailed ablations.
-
-<p align="center">
-[paper link to be made available soon]
 
 
 <p align="center">
@@ -135,6 +138,16 @@ The following arguments are used and can be included at the parser of any traini
 |`config`| String for the `.yaml` configuration file to be used. If arguments that are part of the configuration path are passed by the user, they will be selected over the YAML ones.|
 
 
-## Licence
+## Citation
+
+```
+@article{stergiou2022temporal,
+title={Temporal Progressive Attention for Early Action Prediction},
+author={Stergiou, Alexandros and Damen, Dima},
+journal={arXiv preprint arXiv:2204.13340},
+year={2022}}
+```
+
+## License
 
 MIT
