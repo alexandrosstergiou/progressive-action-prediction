@@ -14,7 +14,7 @@ Temporal Progressive Attention for Early Action Prediction
 
 
 ## Abstract
-Early prediction deals with inferring the ongoing action from partially-observed videos, typically at the outset of the video. We propose a bottleneck-based attention model that captures the evolution of the action through progressive sampling over fine-to-coarse scales. Our proposed __Tem__poral __Pr__ogressive (__TemPr__) model is composed of multiple attention towers, one for each progressive scale. The action prediction is then made through collective agreement considering individual confidences of these attention towers. Extensive experiments over four video datasets showcase state-of-the-art performance on the task of Early Action Prediction
+Early prediction deals with inferring the ongoing action from partially-observed videos, typically at the outset of the video. We propose a bottleneck-based attention model that captures the evolution of the action through progressive sampling over fine-to-coarse scales. Our proposed Temporal Progressive (__TemPr__) model is composed of multiple attention towers, one for each progressive scale. The action prediction is then made through collective agreement considering individual confidences of these attention towers. Extensive experiments over four video datasets showcase state-of-the-art performance on the task of Early Action Prediction
 across a range of backbone architectures.
 We demonstrate the effectiveness and consistency of TemPr through detailed ablations.
 
