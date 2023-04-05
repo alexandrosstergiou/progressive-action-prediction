@@ -1,22 +1,17 @@
-# Progressive Early Action Prediction in PyTorch
-### Code implementation for:
-Temporal Progressive Attention for Early Action Prediction
+# The Wisdom of Crowds: Temporal Progressive Attention for Early Action Prediction
 
-- <a href="https://alexandrosstergiou.github.io/project_pages/TemPr/index.html">[Project page]</a>
 
-- <a href="http://arxiv.org/abs/2204.13340">[ArXiv paper]</a>
-
-- <a href="https://youtu.be/rGR5tJUAFpc">[Video]</a>
+<a href="https://alexandrosstergiou.github.io/project_pages/TemPr/index.html">[Project page 🌐]</a> <a href="http://arxiv.org/abs/2204.13340">[ArXiv preprint 📃]</a> <a href="https://youtu.be/rGR5tJUAFpc">[Video 🎞️]</a>
 
 ![supported versions](https://img.shields.io/badge/python-3.x-brightgreen/?style=flat&logo=python&color=green)
 ![Library](https://img.shields.io/badge/library-PyTorch-blue/?style=flat&logo=pytorch&color=informational)
 ![GitHub license](https://img.shields.io/cocoapods/l/AFNetworking)
 
+This is the code implementation for the CVPR'23 paper <a href="http://arxiv.org/abs/2204.13340">The Wisdom of Crowds: Temporal Progressive Attention for Early Action Prediction</a>.
 
 ## Abstract
-Early prediction deals with inferring the ongoing action from partially-observed videos, typically at the outset of the video. We propose a bottleneck-based attention model that captures the evolution of the action through progressive sampling over fine-to-coarse scales. Our proposed Temporal Progressive (__TemPr__) model is composed of multiple attention towers, one for each progressive scale. The action prediction is then made through collective agreement considering individual confidences of these attention towers. Extensive experiments over four video datasets showcase state-of-the-art performance on the task of Early Action Prediction
-across a range of backbone architectures.
-We demonstrate the effectiveness and consistency of TemPr through detailed ablations.
+Early action prediction deals with inferring the ongoing action from partially-observed videos, typically at the outset of the video. We propose a bottleneck-based attention model that captures the evolution of the action, through progressive sampling over fine-to-coarse scales. Our proposed <b>Tem</b>poral <b>Pr</b>ogressive (TemPr) model is composed of multiple attention towers, one for each scale. The predicted action label is based on the collective agreement considering confidences of these towers. Extensive experiments over four video datasets showcase state-of-the-art performance on the task of Early Action Prediction across a range of encoder architectures. We demonstrate the effectiveness and
+consistency of TemPr through detailed ablations.
 
 
 <p align="center">
@@ -64,9 +59,10 @@ This can be done through the scripts provided in `labels`
 
 
 We have tested our code over the following datasets:
-- **Somethong-Something (v1/sub21/v2)** : [[link]](https://developer.qualcomm.com/software/ai-datasets/something-something)
-- **NTU-RGB** : [[link]](https://rose1.ntu.edu.sg/dataset/actionRecognition/)
 - **UCF-101** : [[link]](https://www.crcv.ucf.edu/data/UCF101.php)
+- **Somethong-Something (sub21/v2)** : [[link]](https://developer.qualcomm.com/software/ai-datasets/something-something)
+- **EPIC-KITCHENS-100** : [[link]](https://epic-kitchens.github.io/2023)
+- **NTU-RGB** : [[link]](https://rose1.ntu.edu.sg/dataset/actionRecognition/)
 
 #### Conversion of videos to SQLite3
 
@@ -140,12 +136,13 @@ The following arguments are used and can be included at the parser of any traini
 
 ## Citation
 
-```
-@article{stergiou2022temporal,
-title={Temporal Progressive Attention for Early Action Prediction},
-author={Stergiou, Alexandros and Damen, Dima},
-journal={arXiv preprint arXiv:2204.13340},
-year={2022}}
+```bibtex
+@inproceedings{stergiou2023wisdom,
+    title = {The Wisdom of Crowds: Temporal Progressive Attention for Early Action Prediction},
+    author = {Stergiou, Alexandros and Damen, Dima},
+    booktitle = {IEEE/CVF Computer Vision and Pattern Recognition (CVPR)},
+    year = {2023}
+}
 ```
 
 ## License
