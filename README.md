@@ -1,7 +1,7 @@
 # The Wisdom of Crowds: Temporal Progressive Attention for Early Action Prediction
 
 
-<a href="https://alexandrosstergiou.github.io/project_pages/TemPr/index.html">[Project page 🌐]</a> <a href="http://arxiv.org/abs/2204.13340">[ArXiv preprint 📃]</a> <a href="https://youtu.be/rGR5tJUAFpc">[Video 🎞️]</a>
+<a href="https://alexandrosstergiou.github.io/project_pages/TemPr/index.html">[Project page 🌐]</a> <a href="http://arxiv.org/abs/2204.13340">[ArXiv preprint 📃]</a> <a href="https://youtu.be/dcmd8U47BT8">[Video 🎞️]</a>
 
 ![supported versions](https://img.shields.io/badge/python-3.x-brightgreen/?style=flat&logo=python&color=green)
 ![Library](https://img.shields.io/badge/library-PyTorch-blue/?style=flat&logo=pytorch&color=informational)
