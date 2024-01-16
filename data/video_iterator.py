@@ -19,128 +19,95 @@ import linecache
 import sys
 from einops import rearrange
 
+import glob
+import torchvision
+import pytorchvideo
+from pytorchvideo.data.utils import thwc_to_cthw
+
 
 '''
 ===  S T A R T  O F  C L A S S  V I D E O  ===
 
     [About]
-        Wrapper class for reading SQL Database files of frames (see jpgs2singlefile.py) and return them as numpy arrays.
+        Wrapper class for reading videos from video files or frames folders and return them as numpy arrays.
 
     [Init Args]
         - vid_path: String that points to the video filepath
         - video_transform: Any object of the video_transforms file, used for applying video transformations (see video_transforms.py file). Defaults to None.
         - end_size: Tuple for the target video size in TxHxW format. Will interpolate the array if the output size from `__extract_frames_fast` is different than that of specified. Defaults to (16, 224, 224).
+        - images: Bool for video being stored as folder of images or not. Defaults to False.
 
     [Methods]
         - __init__ : Class initialiser, takes as argument the video path string.
-        - __del__ : (Args:None) : Function for closing any open database readers.
         - __enter__ : Function for returning the object.
-        - __exit__ : Function for error handling, is used to call __del__
         - reset : Function for resetting the class variables vid_path(string), frame_count(int) and faulty_frame(array)
-        - open : Function for establishing a connection to the database file, given that the file actually exists. Will first try and reset all variables (through __reset__) and then create a connection (self.con) and cursor (self.cur) for database iterations. Taks as argument the video path string.
         - count_frames: Function for returning the number of elements/rows in the database (i.e. the number of saved frames).
-        - extract_frames: High level function for extracting the frames in the database. The indices of the frames are given as an argument of type `list` which should hold EVERY index of the frames to be extracted.
-        - extract_frames_fast: Main function for iterating over database elements/frames and appending them in a numpy array befor returning the created array. Array length is created dynamically at the first iteration. Alongside the indices of frames, the function also takes as an argument if the frames are to be imported with colour or not (boolean variable).
+        - extract_frames: High level function for reading frames. The indices of the frames are given as an argument of type `list` which should hold EVERY index of the frames to be extracted.
 '''
 class Video(object):
     """basic Video class"""
 
-    def __init__(self, vid_path, video_transform=None, end_size=(16,224,224), precentage=1.):
-        self.path = vid_path
+    def __init__(self, vid_path, video_transform=None, end_size=(16,224,224), precentage=1., images=False):
+        #self.path = vid_path
         self.video_per = precentage
-        self.video_path = os.path.join(vid_path, 'frames.db')
-        self.frame_path = os.path.join(vid_path, 'n_frames')
+        self.video_path = vid_path
+        #self.frame_path = os.path.join(vid_path, 'n_frames')
         self.video_transform = video_transform
         self.end_size = end_size
+        self.images = images
 
     def __enter__(self):
         return self
 
     def reset(self):
         self.video_path = None
-        self.frame_path = None
+        #self.frame_path = None
         self.frame_count = -1
         return self
 
 
     def count_frames(self):
-        if (os.path.isfile(self.frame_path)):
-            self.frame_count = int(int(open(self.frame_path,'r').read()) * self.video_per)
-        elif (os.path.isfile(self.video_path)):
-            con = sqlite3.connect(self.video_path)
-            cur = con.cursor()
-            sql = "SELECT Objid, frames FROM Images"
-            row = cur.execute(sql,frame_names)
-            i = 1
-            for ObjId in row:
-                i += 1
-            with open(self.frame_path, 'w') as dst_file:
-                dst_file.write(str(i))
-        else:
-            logging.error('Directory {} is empty!'.format(self.frame_path))
-            raise Exception("Empty directory !")
+        if self.images:
+            return len(glob.glob(self.video_path,"*.jpg"))
+        
+        cap = cv2.VideoCapture(self.video_path)
+        self.frame_count = (float(cap.get(cv2.CAP_PROP_FRAME_COUNT))* self.video_per)
+        
         return self.frame_count
 
     def extract_frames(self, indices):
-        frames = self.extract_frames_fast(indices)
-        return frames
-
-    def extract_frames_fast(self, indices):
-        frames = []
-
-        con = sqlite3.connect(self.video_path)
-        cur = con.cursor()
-
-
-        # retrieve entire video from database (frames are unordered)
-        frame_names = ["{}/{}".format(self.path.split('/')[-1],'frame_%05d'%(index+1)) for index in indices]
-        sql = "SELECT Objid, frames FROM Images WHERE ObjId IN ({seq})".format(seq=','.join(['?']*len(frame_names)))
-        row = cur.execute(sql,frame_names)
-
-        ids = []
-        frames = []
-        i = 0
-
-        row = row.fetchall()
-        # Video order re-arangement
-        for ObjId, item in row:
-            #--- Decode blob
-            nparr  = np.fromstring(item, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            ids.append(ObjId)
-            frames.append(img)
-            i+=1
-
-        frames = [frame for _, frame in sorted(zip(ids,frames), key=lambda pair: pair[0])]
-
-        frames = np.asarray(frames)
-
-        # Force cropping if spatial dims are smaller than the expected size
-        t, h, w, _ = frames.shape
-        indxs = str(indices)
-        #if (h<self.end_size[1] or w<self.end_size[2]):
-            #logging.info("Video of size ({} {} {}) with indices {} is smaller than the required dims and it will be interpolated.".format(i,h,w,indxs))
-
-        # apply video augmentation
-        if self.video_transform is not None:
-            frames = self.video_transform(frames, self.end_size)
-
+        
+        frames = {}
+        if self.images:
+            for idx in sorted(indices):
+                path = os.path.join(self.video_path,f"{idx+1:05d}.jpg")
+                video_frames = [torchvision.io.read_image(path).permute(1,2,0)]
+                 
+        else:
+            video = pytorchvideo.data.encoded_video.EncodedVideo.from_path(self.video_path)
+            fs = video._container.decode(**{"video":0}) # get a stream of frames
+            
+            for i,f in enumerate(fs):
+                if i in indices:
+                    frames[i] = f
+                elif i > indices[-1]:
+                    break
+            
+            result = [frames[pts] for pts in sorted(frames)]
+            video_frames = [torch.from_numpy(f.to_ndarray(format='rgb24')) for f in result] # list of length T with items size [H x W x 3]
+             
+        video_frames = thwc_to_cthw(torch.stack(video_frames).to(torch.float32))
+        
         # Final resizing - w/ check
-        _, t, h, w = list(frames.size())
+        _,t,_,_ = list(video_frames.size())
+        
 
         # Interpolate temporal dimension if frames are less than the ones required
         if (t!=self.end_size[0]):
-            frames = F.interpolate(frames.unsqueeze(0), size=self.end_size, mode='trilinear',align_corners=False).squeeze(0)
+            video_frames = F.interpolate(video_frames.unsqueeze(0), size=self.end_size, mode='trilinear',align_corners=False).squeeze(0)
+        
+        return self.video_transform(video_frames)
 
-        if not('img' in vars()):
-            print('Could not load (all) frames from database: ',self.video_path, 'with_indices',indices)
-
-        cur.close()
-        con.close()
-
-        # Additional verbosity
-        #print(self.video_path,frames.size())
-        return frames
 
 
 '''
@@ -173,6 +140,7 @@ class Video(object):
         - return_video_path: Boolean for returning or not the full video filepath after a video is loaded. Defaults to False.
         - randomise: Boolean for additional randomisation based on date and time. Defaults to True.
         - shuffle_list_seed: Integer, for random shuffling. Defaults to None.
+        - is_jpg: Boolean for using image folders. Defaults to False.
 
     [Methods]
 
@@ -201,7 +169,8 @@ class VideoIter(data.Dataset):
                  name="<NO_NAME>",
                  return_video_path=False,
                  randomise = True,
-                 shuffle_list_seed=None):
+                 shuffle_list_seed=None,
+                 is_jpg=False):
 
         super(VideoIter, self).__init__()
 
@@ -214,6 +183,7 @@ class VideoIter(data.Dataset):
         self.return_video_path = return_video_path
         self.rng = np.random.RandomState(shuffle_list_seed if shuffle_list_seed else 0)
         self.randomise = randomise
+        self.is_jpg = is_jpg
 
         assert num_samplers >= 1, 'VideoIter: The number of samplers cannot be smaller than 1!'
         self.num_samplers = num_samplers
@@ -257,7 +227,7 @@ class VideoIter(data.Dataset):
         try:
 
             # Create Video object
-            video = Video(vid_path=vid_path,video_transform=self.video_transform,end_size=self.clip_size,precentage=self.video_per)
+            video = Video(vid_path=vid_path,video_transform=self.video_transform,end_size=self.clip_size,precentage=self.video_per,images=self.is_jpg)
             if frame_count < 0:
                 frame_count = video.count_frames()
 
@@ -269,7 +239,7 @@ class VideoIter(data.Dataset):
             for s in range(1,self.num_samplers+1):
                 # generating indices
                 range_max = int(frame_count * (s/self.num_samplers))
-                sampled_indices = self.sampler.sampling(range_max=range_max, v_id=v_id)
+                sampled_indices = self.sampler.sampling(range_max=range_max-1, v_id=v_id)
                 # extracting frames
                 sampled_frames.append(video.extract_frames(indices=sampled_indices).unsqueeze(0))
 
@@ -298,15 +268,15 @@ class VideoIter(data.Dataset):
                 succ = True
             except Exception as e:
 
-                exc_type, exc_obj, tb = sys.exc_info()
+                _, exc_obj, tb = sys.exc_info()
                 f = tb.tb_frame
-                lineno = tb.tb_lineno
+                #lineno = tb.tb_lineno
                 filename = f.f_code.co_filename
                 linecache.checkcache(filename)
-                line = linecache.getline(filename, lineno, f.f_globals)
-                message = 'Exception in ({}, line {} "{}"): {}'.format(filename, lineno, line.strip(), exc_obj)
+                #line = linecache.getline(filename, lineno, f.f_globals)
+                #message = 'Exception in ({}, line {} "{}"): {}'.format(filename, lineno, line.strip(), exc_obj)
 
-                prev_index = index
+                #prev_index = index
                 #index = self.rng.choice(range(0, self.__len__()))
                 d_time = int(round(datetime.now().timestamp() * 1000)) # Ensure randomisation
                 index = random.randrange(d_time % self.__len__())
@@ -376,7 +346,7 @@ class VideoIter(data.Dataset):
                 sys.stdout.flush()
                 processed_ids = []
 
-            # Account for folder name of different datasets (e.g. Kinetics, MiT & HACS => `youtube_id` , UCF-101 & HMDB-51 => `id`)
+            # Account for folder name of different datasets (e.g. `youtube_id` , `id`)
             if ('youtube_id' in line):
                 id = line.get('youtube_id').strip()
             else:
@@ -401,7 +371,19 @@ class VideoIter(data.Dataset):
                 video_path = video_path + ('_%06d'%int(float(line.get('time_start')))+('_%06d'%int(float(line.get('time_end')))))
 
             # Check if video indeed exists (handler for not downloaded videos)
-            if not os.path.exists(video_path):
+            extensions = ['.mp4','.avi','m4a']
+            found = False
+            if self.is_jpg:
+                found = os.path.isdir(video_path)
+            else:
+                for e in extensions:
+                    f = video_path+e
+                    if os.path.isfile(f):
+                        found = True
+                        video_path+=e
+                        break
+            
+            if not found:
                 # Uncomment line for additional user feedback
                 #logging.warning("VideoIter:: >> cannot locate `{}'".format(video_path))
                 continue
@@ -409,8 +391,11 @@ class VideoIter(data.Dataset):
             # Increase videos count and read number of frames
             else:
                 found_videos += 1
-                with open(os.path.join(video_path,'n_frames')) as f:
-                    frame_count = int(int(f.readline()) * self.video_per)
+                if self.is_jpg:
+                    frame_count = len(glob.glob(f"{video_path}/*.jpg"))
+                else:
+                    cap = cv2.VideoCapture(video_path)
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
             # Append video info to dictionary
             info = [found_videos, line.get('label'), video_path, frame_count]

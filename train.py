@@ -11,11 +11,9 @@ import coloredlogs, logging
 coloredlogs.install()
 import argparse
 import yaml
-import math
-import imgaug
 
 import dataset
-from network.symbol_builder import Combined, get_pooling
+from network.symbol_builder import Combined
 from network.config import get_config
 from data import iterator_factory
 from run import metric
@@ -24,15 +22,12 @@ from run.lr_scheduler import MultiFactorScheduler
 
 from decimal import Decimal
 
-datasets = [ 'mini-Kinetics',
-             'Kinetics-400',
-             'Kinetics-600',
-             'Kinetics-700',
-             'Moments-in-Time',
-             'HACS',
-             'ActivityNet-v1',
-             'ActivityNet-v2',
-             'NTU-RGB'
+import torch
+import torch.nn.parallel
+import torch.backends.cudnn as cudnn
+from torch.optim import SGD, Adam, AdamW
+
+datasets = [ 'NTU-RGB',
              'UCF-101',
              'HMDB-51',
              'smthng-smthng_coarse',
@@ -60,7 +55,7 @@ parser.add_argument('--num_samplers', type=int, default=3,
                     help='number of video samplers. The window from which frames are sampled from will progressively increase based on `num_frames`*`s`/`num_samplers` for `s` in range(`num_samplers`).')
 
 # data loading parser arguments
-parser.add_argument('--dataset', default='HACS', choices=datasets,
+parser.add_argument('--dataset', default='UCF-101', choices=datasets,
                     help="name of the dataset")
 parser.add_argument('--data_dir', default='data/',
                     help="path for the video files \n ---- Note that the allowed formats are: ---- \n -> video (.mp4, .mpeg, .avi) \n -> image (.jpg, .jpeg, .png) \n -> SQL with frames encoded as BLOBs (.sql) \n See advice in the README about the directory structure.")
@@ -72,7 +67,7 @@ parser.add_argument('--precision', default='fp32', choices=['fp32','mixed'],
                     help="switch between single (fp32)/mixed (fp16) precision.")
 parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
-parser.add_argument('--frame_size', default=(224,224),
+parser.add_argument('--frame_size', default=(100,176),
                     help="define the (max) frame size of each input sample.")
 parser.add_argument('--train_frame_interval', default=[1,2,3,4], nargs='+',
                     help="define the sampling interval between frames.")
@@ -106,7 +101,7 @@ parser.add_argument('--weight_decay', type=float, default=1e-5,
 # storing parser arguments
 parser.add_argument('--results_dir', type=str, default="./results",
                     help="folder for logging accuracy and saving models.")
-parser.add_argument('--save_frequency', type=float, default=60,
+parser.add_argument('--save_frequency', type=float, default=1,
                     help="save once after N epochs.")
 parser.add_argument('--log_file', type=str, default=None,
                     help="set logging file.")
@@ -146,6 +141,10 @@ parser.add_argument('--ff_dropout', type=float, default = 0.,
                     help='dropout probability for the feed-forward sub-net.')
 parser.add_argument('--weight_tie_layers', type=bool, default = False,
                     help="whether to weight tie layers (optional).")
+parser.add_argument('--accum_grads', default=1, type=int,
+                    help='define the number of workers.')
+parser.add_argument('--use_frames', default=False, type=lambda x: (str(x).lower() == 'true'),
+                    help='flag for using folders with jpg images.')
 
 parser.add_argument('--pool', type=str, default='ada', choices=['max','avg','em','edscw','idw','ada'],
                     help='choice of pooling method to use for selection/fusion of frame features.')
@@ -239,14 +238,7 @@ if __name__ == "__main__":
         os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1]
     logging.info('CUDA_VISIBLE_DEVICES set to '+os.environ["CUDA_VISIBLE_DEVICES"])
 
-    # import torch
-    import torch
-    import torch.nn.parallel
-    import torch.backends.cudnn as cudnn
-    import torch.distributed as dist
-    from torch.optim import SGD, Adam, AdamW
-    #from torchlars import LARS
-    #from pytorch_lamb import Lamb
+    
 
     logging.info("Using pytorch version {} ({})".format(torch.__version__, torch.__path__))
     logging.info("Start training with args:\n" + json.dumps(vars(args), indent=4, sort_keys=True))
@@ -255,6 +247,9 @@ if __name__ == "__main__":
     assert torch.cuda.is_available(), "CUDA is not available. CUDA devices are required from this repo!"
     torch.manual_seed(args.random_seed)
     torch.cuda.manual_seed(args.random_seed)
+    
+    if args.head.lower() == 'none':
+        args.head = None
 
     clip_length = int(args.frame_len)
     clip_size = args.frame_size
@@ -297,6 +292,7 @@ if __name__ == "__main__":
     ratio = 'observation_ratio_'+str(args.video_per)
     samplers = 'samplers_'+str(args.num_samplers)
     latents = 'latents_'+str(args.num_latents)+'_heads_'+str(args.latent_heads)
+    
     if args.head:
         results_path = os.path.join(args.results_dir,args.dataset,latents,samplers,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     else:
@@ -327,7 +323,7 @@ if __name__ == "__main__":
         val_per = args.video_per_val
 
     # Create custom loaders for train and validation
-    train_data, eval_loader, train_length = iterator_factory.create(
+    train_data, eval_data, train_length = iterator_factory.create(
         data_dir=args.data_dir ,
         labels_dir=args.label_dir ,
         video_per_train=train_per,
@@ -345,7 +341,8 @@ if __name__ == "__main__":
         mean=input_conf['mean'],
         std=input_conf['std'],
         seed=iter_seed,
-        num_workers=args.workers)
+        num_workers=args.workers,
+        use_frames=args.use_frames)
 
     print()
     # Parameter LR configuration for optimiser
@@ -366,6 +363,8 @@ if __name__ == "__main__":
         if 'fc' in name.lower():
             params['classifier']['params'].append(param)
         elif 'head' in name.lower():
+            params['head']['params'].append(param)
+        elif args.head is None and 'backbone' in name.lower():
             params['head']['params'].append(param)
         elif 'pred_fusion' in name.lower():
             params['pool']['params'].append(param)
@@ -572,13 +571,13 @@ if __name__ == "__main__":
                                 metric.Accuracy(name="top1", topk=1),
                                 metric.Accuracy(name="top5", topk=5))
     # enable cudnn tune
-    cudnn.benchmark = True
+    #cudnn.benchmark = True
 
     logging.info('LRScheduler: The learning rate will change at steps: '+str([x*num_steps for x in args.lr_steps]))
 
     # Main training happens here
     net.fit(train_iter=train_data,
-            eval_iter=eval_loader,
+            eval_iter=eval_data,
             batch_shape=(int(args.batch_size),int(clip_length),int(clip_size[0]),int(clip_size[1])),
             workers=args.workers,
             no_cycles=(not(args.long_cycles) and not(args.short_cycles)),
@@ -593,27 +592,10 @@ if __name__ == "__main__":
             directory=results_path,
             precision=args.precision,
             scaler=scaler,
-            samplers=args.num_samplers)
+            samplers=args.num_samplers,
+            accum_grads=args.accum_grads)
 
-    # Create custom loaders for train and validation
-    eval_loader = iterator_factory.create(
-        return_train=False,
-        return_video_path=True,
-        data_dir=args.data_dir ,
-        labels_dir=args.label_dir ,
-        video_per_val=val_per,
-        num_samplers=args.num_samplers,
-        batch_size=1,
-        clip_length=clip_length,
-        clip_size=clip_size,
-        val_clip_length=clip_length,
-        val_clip_size=clip_size,
-        include_timeslices = dataset_cfg['include_timeslices'],
-        val_interval=args.val_frame_interval,
-        mean=input_conf['mean'],
-        std=input_conf['std'],
-        seed=iter_seed,
-        num_workers=args.workers)
+   
 '''
 ---  E N D  O F  M A I N  F U N C T I O N  ---
 '''

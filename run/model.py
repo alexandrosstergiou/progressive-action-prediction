@@ -1,3 +1,4 @@
+# pylint: disable=line-too-long
 '''
 ---  I M P O R T  S T A T E M E N T S  ---
 '''
@@ -139,7 +140,8 @@ class static_model(object):
                             # Additional verbose
                             #logging.info('Loaded weights for {} from {}'.format(n_name_trim,f_name_trim))
                             self.net.state_dict()[n_name].copy_(f_param.view(n_param.shape))
-                            unused_keys.remove(f_name)
+                            if f_name in unused_keys:
+                                unused_keys.remove(f_name)
                             try:
                                 n_state_dict_keys.remove(n_name)
                             except Exception:
@@ -212,41 +214,24 @@ class static_model(object):
         # Create optimiser state if it does not exist. Use the `epoch` and `state_dict`
         state_dict = self.net.state_dict()
 
-        # Check if `backbone_optimiser_state` is not None
-        if optimiser_state is None:
-            torch.save({'epoch': epoch,
-                        'state_dict': state_dict},
+        torch.save({'state_dict': state_dict},
                         save_path)
-            logging.debug("Checkpoint (only model) saved to: {}".format(save_path))
-        else:
-            torch.save({'epoch': epoch,
-                        'state_dict': state_dict,
-                        'optimizer': optimiser_state},
-                        save_path)
-            logging.debug("Checkpoint (model & optimiser) saved to: {}".format(save_path))
+        logging.debug("Checkpoint saved to: {}".format(save_path))
 
 
     def forward(self, data, target, precision):
         # Data conversion
-        if precision=='mixed':
-            data = data.cuda().half()
-        else:
-            data =  data.cuda().float()
+        data = data.cuda()
         target = target.cuda()
 
         # Forward for training/evaluation
         if self.net.training:
-            if precision=='mixed':
-                with amp.autocast():
-                    outputs = self.net(data)
-            else:
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
                 outputs = self.net(data)
+            
         else:
             with torch.no_grad():
-                if precision=='mixed':
-                    with amp.autocast():
-                        outputs = self.net(data)
-                else:
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
                     outputs = self.net(data)
         # Check for tuple
         if isinstance(outputs, tuple):
@@ -260,11 +245,7 @@ class static_model(object):
         losses = []
         for out in o_list:
             if hasattr(self, 'criterion') and self.criterion is not None and target is not None:
-                if precision=='mixed':
-                    with amp.autocast():
-                        losses.append(self.criterion(out, target))
-                else:
-                    losses.append(self.criterion(out, target))
+                losses.append(self.criterion(out, target))
             else:
                 loss = None
 
@@ -349,7 +330,7 @@ class model(static_model):
     def epoch_end_callback(self,results_directory):
         if self.callback_kwargs['epoch_elapse'] is not None:
             # Main logging definition
-            logging.info("Epoch [{:d}]   time cost: {:.2f} sec ({:.2f} h)".format(
+            logging.info("Epoch [{:d}]   time cost: {:.4f} sec ({:.4f} h)".format(
                     self.callback_kwargs['epoch'],
                     self.callback_kwargs['epoch_elapse'],
                     self.callback_kwargs['epoch_elapse']/3600.))
@@ -388,6 +369,7 @@ class model(static_model):
             precision='mixed',
             scaler=None,
             samplers=4,
+            accum_grads=1,
             **kwargs):
 
         # Check kwargs used
@@ -396,15 +378,7 @@ class model(static_model):
 
         assert torch.cuda.is_available(), "only support GPU version"
         #torch.autograd.set_detect_anomaly(True)
-
-        pause_sec = 0.
-        train_loaders = {}
-        active_batches = {}
-
-        n_workers = workers
-
-
-        cycles = True
+        torch.manual_seed(0)
 
         self.step_callback.set_tot_epochs(epoch_end)
         self.step_callback.set_tot_batches(iter_per_epoch)
@@ -434,6 +408,8 @@ class model(static_model):
 
         # Set best eval for saving model
         best_val_top1 = 0.0
+        train_loader = torch.utils.data.DataLoader(train_iter,batch_size=batch_shape[0], shuffle=True,num_workers=10, pin_memory=False,drop_last=True)
+        val_loader = torch.utils.data.DataLoader(eval_iter,batch_size=batch_shape[0], shuffle=False,num_workers=10, pin_memory=False,drop_last=True)
 
         for i_epoch in range(epoch_start, epoch_end):
 
@@ -444,11 +420,6 @@ class model(static_model):
             val_file = open(os.path.join(directory,'val_results_s{0:04d}.csv'.format(epoch_start)), mode='a+', newline='')
             val_writer = csv.DictWriter(val_file, fieldnames=fieldnames)
 
-
-            if (no_cycles):
-                logging.info('No cycles selected')
-                train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=batch_shape[0], shuffle=True,num_workers=n_workers, pin_memory=False))
-                cycles = False
 
             self.callback_kwargs['epoch'] = i_epoch
             epoch_start_time = time.time()
@@ -482,172 +453,47 @@ class model(static_model):
             epoch_speeds = [0,0,0]
             batch_start_time = time.time()
             logging.debug("Start epoch {:d}:".format(i_epoch))
-            for i_batch in range(iter_per_epoch):
-
-                b = batch_shape[0]
-                t = batch_shape[1]
-                h = batch_shape[2]
-                w = batch_shape[3]
-
-                selection = ''
-
-                loader_id = 0
-                # Increment long cycle steps (8*B).
-                if i_batch in long_short_steps_dir['long_0']:
-                    b = 8 * b
-                    t = t//4
-                    h = int(h//math.sqrt(2))
-                    w = int(w//math.sqrt(2))
-
-                # Increment long cycle steps (4*B).
-                elif i_batch in long_short_steps_dir['long_1']:
-                    b = 4 * b
-                    t = t//2
-                    h = int(h//math.sqrt(2))
-                    w = int(w//math.sqrt(2))
-
-                # Increment long cycle steps (2*B).
-                elif i_batch in long_short_steps_dir['long_2']:
-                    b = 2 * b
-                    t = t//2
-
-                # Increment short cycle steps (2*b).
-                if i_batch in long_short_steps_dir['short_1']:
-                    loader_id = 1
-                    b = 2 * b
-                    h = int(h//math.sqrt(2))
-                    w = int(w//math.sqrt(2))
-
-                # Increment short cycle steps (4*b).
-                elif i_batch in long_short_steps_dir['short_2']:
-                    loader_id = 2
-                    b = 4 * b
-                    h = h//2
-                    w = w//2
-
-                if (h%2 != 0): h+=1
-                if (w%2 != 0): w+=1
-
-                batch_s = (t,h,w)
-                if cycles:
-                    train_iter.size_setter(new_size=(t,h,w))
-
-                    if (batch_s not in active_batches.values()):
-                        logging.info('Creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
-                        # Ensure rendomisation
-                        train_iter.shuffle(i_epoch+i_batch)
-                        # create dataloader corresponding to the created dataset.
-                        train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False))
-                        if loader_id in train_loaders:
-                            del train_loaders[loader_id]
-                        train_loaders[loader_id]=train_loader
-                        if loader_id in active_batches:
-                            del active_batches[loader_id]
-                        active_batches[loader_id]=batch_s
-                        gc.collect()
-
-                    try:
-                        gc.collect()
-                        sum_read_elapse = time.time()
-                        data,target = next(train_loaders[loader_id])
-                        sum_read_elapse = time.time() - sum_read_elapse
-                    except Exception as e:
-                        logging.warning(e)
-                        # Reinitialise if used up
-                        logging.warning('Re-creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
-                        # Ensure rendomisation
-                        train_iter.shuffle(i_epoch+i_batch)
-                        train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False))
-
-                        if loader_id in train_loaders:
-                            del train_loaders[loader_id]
-                        train_loaders[loader_id]=iter(train_loader)
-                        if loader_id in active_batches:
-                            del active_batches[loader_id]
-                        active_batches[loader_id]=batch_s
-                        gc.collect()
-                        sum_read_elapse = time.time()
-                        data,target = next(train_loaders[loader_id])
-                        sum_read_elapse = time.time() - sum_read_elapse
-
-                    gc.collect()
-                else:
-                    sum_read_elapse = time.time()
-                    data,target = next(train_loader)
-                    sum_read_elapse = time.time() - sum_read_elapse
+            sum_read_elapse = time.time()
+            
+            for i_batch,item in enumerate(train_loader): 
+                
+                data,target = item
+                
+                sum_read_elapse = time.time() - sum_read_elapse
 
                 self.callback_kwargs['batch'] = i_batch
+                
+                sum_forward_elapse = time.time()
+                outputs, losses = self.forward(data, target, precision=precision)
+                sum_forward_elapse = time.time() - sum_forward_elapse
 
-                # Catch Segmentation fault errors and nan grads
-                while True:
-                    forward = False
-                    backward = False
-                    try:
-                        # [forward] making next step
-                        torch.cuda.empty_cache()
-                        sum_forward_elapse = time.time()
-                        outputs, losses = self.forward(data, target, precision=precision)
-                        sum_forward_elapse = time.time() - sum_forward_elapse
-                        forward = True
+                # [backward]
+                sum_backward_elapse = time.time()
+                
+                lr = lr_scheduler.update()
+                self.adjust_learning_rate(optimiser=optimiser,lr=lr)
+                
+                scaler.scale(losses[0]).backward()
+                if i_batch+1 % accum_grads:    
+                    scaler.step(optimiser)
+                    scaler.update()
+                    optimiser.zero_grad()
 
-                        # [backward]
-                        optimiser.zero_grad()
-                        sum_backward_elapse = time.time()
-                        for loss in losses[:1]:
-                            if precision=='mixed':
-                                scaler.scale(loss).backward()
-                            else:
-                                loss.backward()
-                        sum_backward_elapse = time.time() - sum_backward_elapse
-                        lr = lr_scheduler.update()
-                        batch_size = tuple(data.size())
-                        self.adjust_learning_rate(optimiser=optimiser,lr=lr)
-                        if precision=='mixed':
-                            scaler.step(optimiser)
-                            scaler.update()
-                        else:
-                            optimiser.step()
-                        backward = True
-                        break
-
-                    except Exception as e:
-                        # Create new data loader in the (rare) case of segmentation fault
-                        # Or nan loss
-                        logging.info(e)
-                        logging.warning('Error in forward/backward: forward executed: {} , backward executed: {}'.format(forward,backward))
-                        logging.warning('Creating dataloader for batch of size ({},{},{},{})'.format(b,*batch_s))
-                        train_iter.shuffle(i_epoch+i_batch+int(time.time()))
-
-                        if loader_id in train_loaders:
-                            del train_loaders[loader_id]
-                        if loader_id in active_batches:
-                            del active_batches[loader_id]
-                        if loss in locals():
-                            del loss
-
-                        gc.collect()
-                        optimiser.zero_grad()
-                        torch.cuda.empty_cache()
-                        train_loader = iter(torch.utils.data.DataLoader(train_iter,batch_size=b, shuffle=True,num_workers=n_workers, pin_memory=False))
-                        train_loaders[loader_id]=train_loader
-                        active_batches[loader_id]=batch_s
-                        sum_read_elapse = time.time()
-                        data,target = next(train_loaders[loader_id])
-                        sum_read_elapse = time.time() - sum_read_elapse
-                        gc.collect()
-
-                # [evaluation] update train metric
-                metrics.update([outputs[0].data.cpu().float()],
-                               target.cpu(),
-                               [losses[0].data.cpu()],
+                sum_backward_elapse = time.time() - sum_backward_elapse
+                batch_size = tuple(data.size())
+                
+                # update train metric
+                metrics.update([outputs[0].detach().data.cpu().float()],
+                               target.detach().cpu(),
+                               [losses[0].detach().data.cpu()],
                                lr,
                                batch_size)
 
                 # update train metrics for sampler
                 for s,s_m in enumerate(sampler_metrics_list):
-                    s_m.update([outputs[s+1].data.cpu().float()],
-                               target.cpu(),
-                               [losses[s+1].data.cpu()],
+                    s_m.update([outputs[s+1].detach().data.cpu().float()],
+                               target.detach().cpu(),
+                               [losses[s+1].detach().data.cpu()],
                                lr,
                                batch_size)
 
@@ -680,13 +526,13 @@ class model(static_model):
                     sum_backward_elapse = 0.
                     # callbacks
                     self.step_end_callback()
+                    
+                    sum_read_elapse = time.time()
 
             # Epoch end
             self.callback_kwargs['epoch_elapse'] = time.time() - epoch_start_time
             self.callback_kwargs['optimiser_dict'] = optimiser.state_dict()
             self.epoch_end_callback(directory)
-            train_loaders = {}
-            active_batches = {}
 
             l = len(train_top1_sum['cl'])
             row = {'Epoch':str(i_epoch)}
@@ -710,36 +556,28 @@ class model(static_model):
                 sum_read_elapse = time.time()
                 sum_forward_elapse = 0.
 
-                for i_batch, (data, target) in enumerate(eval_iter):
+                for i_batch,item in enumerate(val_loader):
+                    
+                    data, target = item
+                    sum_read_elapse = time.time()
+                    self.callback_kwargs['batch'] = i_batch
+                    sum_forward_elapse = time.time()
 
-                    f_completed = False
-                    while not f_completed:
-                        try:
-                            sum_read_elapse = time.time()
-                            self.callback_kwargs['batch'] = i_batch
-                            sum_forward_elapse = time.time()
-
-                            # [forward] making next step
-                            torch.cuda.empty_cache()
-                            outputs, losses = self.forward(data, target, precision=precision)
-                            f_completed = True
-
-                        except Exception as e:
-                            logging.info(e)
-                            logging.warning('Error in forward/backward: forward executed: {} , backward executed: {}'.format(forward,backward))
-
+                    # [forward] making next step
+                    
+                    outputs, losses = self.forward(data, target, precision=precision)
 
                     sum_forward_elapse = time.time() - sum_forward_elapse
 
-                    metrics.update([outputs[0].data.cpu().float()],
-                                    target.cpu(),
-                                   [losses[0].data.cpu()])
+                    metrics.update([outputs[0].detach().data.cpu().float()],
+                                    target.detach().cpu(),
+                                   [losses[0].detach().data.cpu()])
 
                     # update train metrics for sampler
                     for s,s_m in enumerate(sampler_metrics_list):
-                        s_m.update([outputs[s+1].data.cpu().float()],
-                                   target.cpu(),
-                                   [losses[s+1].data.cpu()])
+                        s_m.update([outputs[s+1].detach().data.cpu().float()],
+                                   target.detach().cpu(),
+                                   [losses[s+1].detach().data.cpu()])
 
                         # Append matrices
                         sm = s_m.get_name_value()
@@ -757,7 +595,7 @@ class model(static_model):
                     val_top5_avg = sum(val_top5_sum['cl'])/(i_batch+1)
                     val_loss_avg = sum(val_loss_sum['cl'])/(i_batch+1)
 
-                    if (i_batch%50 == 0):
+                    if (i_batch%20 == 0):
                         logging.info('Epoch [{:d}]: Iteration [{:d}]:  (val)  average top-1 acc: {:.5f}   average top-5 acc: {:.5f}   average loss {:.5f}'.format(i_epoch,i_batch,val_top1_avg,val_top5_avg,val_loss_avg))
 
                 # evaluation callbacks
@@ -907,7 +745,7 @@ class model(static_model):
                         else:
                             accurac_dict[label]['samp_'+str(s)]['FP'] = {path[0].split('/')[-1] : {str(fp_label) : float(prob) for (fp_label,prob) in zip(fp_labels,probs)}}
 
-                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.3f} | {:.3f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], sum(val_top1_sum['cl'])/(i_batch + 1))
+                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.4f} | {:.4f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], sum(val_top1_sum['cl'])/(i_batch + 1))
                 print(' '*(len(line)+20), end='\r')
                 print(line, end='\r')
 

@@ -2,21 +2,38 @@
 ---  I M P O R T  S T A T E M E N T S  ---
 '''
 import os
-import random
 import sys
 import coloredlogs, logging
 coloredlogs.install()
-import math
 import torch
-import copy
-import numpy as np
-import imgaug.augmenters as iaa
-import torch.multiprocessing as mp
-from torch.nn import functional as F
-from . import video_transforms as transforms
 from .video_iterator import VideoIter
-from torch.utils.data.sampler import RandomSampler
 from . import video_sampler as sampler
+
+
+import pytorchvideo
+import torchvision
+
+'''
+---  S T A R T  O F  F U N C T I O N  F L E X I B L E _ P A D  ---
+
+    [About]
+        Function for data padding based on the largest dim. It will always ensure that the size of dim -2 and -1 match by padding the shortest of the two.
+
+    [Args]
+        - data: Tensor of size [..., D2, D1]. 
+
+    [Returns]
+        - Tensor of size [..., max(D1,D2), max(D1,D2)].
+'''
+def flexible_pad(data):
+    if data.size()[-2] < data.size()[-1]:
+        data = torch.nn.functional.pad(data,(0,0,data.size()[-1]-data.size()[-2],0,0,0))
+    if data.size()[-1] < data.size()[-2]:
+        data = torch.nn.functional.pad(data,(data.size()[-2]-data.size()[-1],0,0,0,0,0))
+    return data
+'''
+---  E N D  O F  F U N C T I O N  F L E X I B L E _ P A D  ---
+'''
 
 
 '''
@@ -29,14 +46,17 @@ from . import video_sampler as sampler
         - data_dir: String containing the complete path of the dataset video files.
         - labels_dir: String containing the complete path of the label files.
         the parent path of where the dataset is. Defaults to `/media/user/disk0`.
+        - eval_only: Bool for returning only the validation set iterator.
         - video_per_train: Float for the precentage of video frames used in training. Defaults to .6.
         - video_per_val: Float for the precentage of video frames used in inference. Defaults to .6.
+        - num_samplers: Integer for the number of samplers. Deafaults to 4.
         - clip_length: Integer for the number of frames to sample per video. Defaults to 8.
         - clip_size: Tuple for the width and height of the frames in the video. Defaults to (224,224).
         - val_clip_length: Integer for the number of frames in the validation clips. If None, they
         will be assigned the same as `clip_length`. Defaults to None.
         - val_clip_size: Integer for the width and height of the frames in the validation clips. If None, they
         will be assigned the same as `clip_size`. Defaults to None.
+        - include_timeslices: Bool for the filenames containing time slices from the orginal video. Defaults to True.
         - train_interval: Integer for the interval for sampling the training clips. Defaults to 2.
         - val_interval: Integer for the interval for sampling the validation clips. Defaults to 2.
         - mean: List or Tuple for the per-channel mean values of frames. Used to normalise the values in range.
@@ -45,6 +65,7 @@ from . import video_sampler as sampler
         It uses the ImageNet std by default. Defaults to [0.229, 0.224, 0.225].
         - seed: Integer for randomisation.
         - return_video_path: Bool for returning the filepath string alongside the video. Used for inference. Defaults to False.
+        - use_frames: Bool for videos stored in folders of images. Deafults to False.
 
     [Returns]
         - Tuple for training VideoIter object and validation VideoIter object.
@@ -66,16 +87,13 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
              std=[0.229, 0.224, 0.225],
              seed=torch.distributed.get_rank() if torch.distributed.is_initialized() else 0,
              return_video_path=False,
+             use_frames=False,
              **kwargs):
 
     logging.debug("VideoIter:: clip_length = {}, interval = [train: {}, val: {}], seed = {}".format( \
                 clip_length, train_interval, val_interval, seed))
 
     if not eval_only:
-
-        # Use augmentations only for part of the data
-        sometimes_aug = lambda aug: iaa.Sometimes(0.25, aug)
-        sometimes_seq = lambda aug: iaa.Sometimes(0.75, aug)
 
 
         train_sampler = sampler.RandomSampling(num=clip_length,
@@ -93,30 +111,20 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                               include_timeslices = include_timeslices,
                               sampler=train_sampler,
                               video_size=(clip_length,clip_size[0],clip_size[1]),
-                              video_transform = transforms.Compose(
-                                  transforms=iaa.Sequential([
-                                      iaa.Resize({"shorter-side": clip_size[0], "longer-side":"keep-aspect-ratio"}),
-                                      sometimes_seq(iaa.Sequential([
-                                          sometimes_aug(iaa.GaussianBlur(sigma=[0.1,0.2])),
-                                          sometimes_aug(iaa.Add((-5, 5), per_channel=True)),
-                                          sometimes_aug(iaa.AverageBlur(k=(1,2))),
-                                          sometimes_aug(iaa.Multiply((0.9, 1.1))),
-                                          sometimes_aug(iaa.GammaContrast((0.95,1.05),per_channel=True)),
-                                          sometimes_aug(iaa.AddToHueAndSaturation((-7, 7), per_channel=True)),
-                                          sometimes_aug(iaa.LinearContrast((0.95, 1.05))),
-                                          sometimes_aug(
-                                              iaa.OneOf([
-                                                  iaa.PerspectiveTransform(scale=(0.02, 0.05), keep_size=True),
-                                                  iaa.Rotate(rotate=(-10,10)),
-                                              ])
-                                          )
-                                      ])),
-                                      iaa.Fliplr(0.5)
+                              video_transform = torchvision.transforms.Compose([
+                                  pytorchvideo.transforms.Div255(),
+                                  pytorchvideo.transforms.Normalize(mean, std),
+                                  pytorchvideo.transforms.ShortSideScale(clip_size[0]),
+                                  torchvision.transforms.Resize((clip_size[0],clip_size[1])),
+                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  torchvision.transforms.GaussianBlur(sigma=[0.1, 2.0], kernel_size=5),
+                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  torchvision.transforms.RandomHorizontalFlip(p=0.5),
+                                  torchvision.transforms.Lambda(flexible_pad)
                                   ]),
-                                  normalise=[mean,std]
-                              ),
                               name='train',
-                              shuffle_list_seed=(seed+2))
+                              shuffle_list_seed=(seed+2),
+                              is_jpg=use_frames)
 
         else:
             train = VideoIter(dataset_location=data_dir,
@@ -127,32 +135,19 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                               include_timeslices = include_timeslices,
                               sampler=train_sampler,
                               video_size=(clip_length,clip_size[0],clip_size[1]),
-                              video_transform = transforms.Compose(
-                                  transforms=iaa.Sequential([
-                                      iaa.Resize({"shorter-side": 384, "longer-side":"keep-aspect-ratio"}),
-                                      iaa.CropToFixedSize(width=384, height=384, position='center'),
-                                      iaa.CropToFixedSize(width=clip_size[1], height=clip_size[0], position='uniform'),
-                                      sometimes_seq(iaa.Sequential([
-                                          sometimes_aug(iaa.GaussianBlur(sigma=[0.1,0.2])),
-                                          sometimes_aug(iaa.Add((-5, 10), per_channel=True)),
-                                          sometimes_aug(iaa.AverageBlur(k=(1,2))),
-                                          sometimes_aug(iaa.Multiply((0.9, 1.1))),
-                                          sometimes_aug(iaa.GammaContrast((0.85,1.15),per_channel=True)),
-                                          sometimes_aug(iaa.AddToHueAndSaturation((-7, 7), per_channel=True)),
-                                          sometimes_aug(iaa.LinearContrast((0.9, 1.1))),
-                                          sometimes_aug(
-                                              iaa.OneOf([
-                                                  iaa.PerspectiveTransform(scale=(0.02, 0.05), keep_size=True),
-                                                  iaa.Rotate(rotate=(-10,10)),
-                                              ])
-                                          )
-                                      ])),
-                                      iaa.Fliplr(0.5)
-                                  ]),
-                                  normalise=[mean,std]
-                              ),
+                              video_transform = torchvision.transforms.Compose([
+                                  pytorchvideo.transforms.Div255(),
+                                  pytorchvideo.transforms.Normalize(mean, std),
+                                  pytorchvideo.transforms.RandomShortSideScale(min_size=256, max_size=320),
+                                  torchvision.transforms.RandomCrop(244),
+                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  torchvision.transforms.GaussianBlur(sigma=[0.1, 2.0], kernel_size=5),
+                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  torchvision.transforms.RandomHorizontalFlip(p=0.5)
+                                      ]),
                               name='train',
-                              shuffle_list_seed=(seed+2))
+                              shuffle_list_seed=(seed+2),
+                              is_jpg=use_frames)
 
     # Only return train iterator
     if (val_clip_length is None and val_clip_size is None):
@@ -172,12 +167,15 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                         return_video_path=return_video_path,
                         sampler=val_sampler,
                         video_size=(clip_length,clip_size[0],clip_size[1]),
-                        video_transform=transforms.Compose(
-                                        transforms=iaa.Sequential([
-                                            iaa.Resize({"shorter-side": clip_size[0], "longer-side":"keep-aspect-ratio"})
-                                        ]),
-                                        normalise=[mean,std]),
-                         name='val')
+                        video_transform=torchvision.transforms.Compose([
+                                  pytorchvideo.transforms.Div255(),
+                                  pytorchvideo.transforms.Normalize(mean, std),
+                                  pytorchvideo.transforms.ShortSideScale(clip_size[0]),
+                                  torchvision.transforms.Resize((clip_size[0],clip_size[1])),
+                                  torchvision.transforms.Lambda(flexible_pad)
+                                      ]),
+                         name='val',
+                         is_jpg=use_frames)
     else:
         val = VideoIter(dataset_location=data_dir,
                         csv_filepath=os.path.join(labels_dir, 'val.csv'),
@@ -187,14 +185,14 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                         return_video_path=return_video_path,
                         sampler=val_sampler,
                         video_size=(16,256,256),
-                        video_transform=transforms.Compose(
-                                        transforms=iaa.Sequential([
-                                                   iaa.Resize({"shorter-side": 294, "longer-side":"keep-aspect-ratio"}),
-                                                   iaa.CropToFixedSize(width=294, height=294, position='center'),
-                                                   iaa.CropToFixedSize(width=256, height=256, position='center')
-                                                   ]),
-                                        normalise=[mean,std]),
-                         name='val')
+                        video_transform=torchvision.transforms.Compose([
+                                  pytorchvideo.transforms.Div255(),
+                                  pytorchvideo.transforms.Normalize(mean, std),
+                                  pytorchvideo.transforms.ShortSideScale(256),
+                                  torchvision.transforms.CenterCrop(256),
+                                      ]),
+                         name='val',
+                         is_jpg=use_frames)
 
     if eval_only:
         return val
@@ -212,50 +210,24 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
         Function for creating iterable datasets.
 
     [Args]
-        - batch_size: Integer for the size of each batch.
-        - return_len: Boolean for returning the length of the dataset. Defaults to False.
+        - return_train: Bolean for returning the training dataloader. If set to `False` only the val/val_loader is returned. Defaults to `True`.
 
     [Returns]
-        - Tuple for training VideoIter object and validation utils.data.DataLoader object.
+        - Tuple containing training and validation VideoIter objects.
 '''
-def create(return_len=False, return_train=True, **kwargs):
+def create(return_train=True, **kwargs):
 
     if not return_train:
         val = get_data(eval_only=True,**kwargs)
         val_loader = torch.utils.data.DataLoader(val,
             batch_size=kwargs['batch_size'], shuffle=False,
             num_workers=kwargs['num_workers'], pin_memory=False)
-        return val_loader
+        return val,val_loader,val.__len__()
 
     dataset_iter = get_data(**kwargs)
     train,val = dataset_iter
-    val_loader = torch.utils.data.DataLoader(val,
-        batch_size=kwargs['batch_size'], shuffle=False,
-        num_workers=kwargs['num_workers'], pin_memory=False)
 
-    return train,val_loader,train.__len__()
-
-    if(not isinstance(dataset_iter,tuple)):
-            train_loader = torch.utils.data.DataLoader(dataset_iter,
-                batch_size=batch_size, shuffle=True,
-                num_workers=kwargs['num_workers'], pin_memory=False)
-
-            return train_loader
-
-    train,val = dataset_iter
-
-    train_loader = torch.utils.data.DataLoader(train,
-        batch_size=batch_size, shuffle=True,
-        num_workers=kwargs['num_workers'], pin_memory=False)
-
-    val_loader = torch.utils.data.DataLoader(val,
-        batch_size=batch_size, shuffle=False,
-        num_workers=kwargs['num_workers'], pin_memory=False)
-
-    if return_len:
-        return(train_loader,val_loader,train.__len__())
-    else:
-        return (train_loader, val_loader)
+    return train,val,train.__len__()
 '''
 ---  E N D  O F  F U N C T I O N  C R E A T E  ---
 '''

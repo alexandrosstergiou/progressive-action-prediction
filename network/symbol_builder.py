@@ -4,10 +4,12 @@
 
 import coloredlogs, logging
 coloredlogs.install()
-from .mtnet import MTNet_xs, MTNet_s, MTNet_m, MTNet_l, MTNet_xl, MTNet_xxl, MTNet_xs_g8, MTNet_s_g8, MTNet_m_g8, MTNet_l_g8
-from .resnet import r3d_18, r3d_34, r3d_50, r3d_101, r3d_152, r3d_200, r3dxt50_32x4d, r3dxt101_32x8d, wide_r3d50_2,wide_r3d101_2, r2plus1d_18, r2plus1d_34, r2plus1d_50, r2plus1d_101, r2plus1d_152, r2plus1d_200, r2plus1dxt50_32x4d, r2plus1dxt101_32x8d, wide_r2plus1d50_2,wide_r2plus1d101_2
+from .resnet import r3d_18, r3d_34, r3d_50, r3d_101, r3d_152, r3d_200, r3dxt50_32x4d, r3dxt101_32x8d
 
 from .swin import get_swin_ssv2
+
+from .movinets import MoViNet
+from .movinets.config import _C
 
 from .tempr_h import TemPr_h
 
@@ -25,6 +27,8 @@ from torchinfo import summary
 
 import adapool_cuda
 from adaPool import IDWPool1d, EMPool1d, EDSCWPool1d, AdaPool1d
+
+import sys
 
 
 
@@ -74,44 +78,28 @@ def beautify_net(net):
         - net: Module for the loaded Pytorch network.
 '''
 def get_symbol(name, samplers, pool=None, headless=False, **kwargs):
-
+    
+    # MOVINET
+    if 'MOVINET' in name.upper():
+        net =  MoViNet(_C.MODEL.MoViNetA4, causal = False, pretrained = True, return_embed=True)
+        net.classifier = torch.nn.Identity()
+        in_channels = 856
+    # X3D
+    elif 'X3D' in name.upper():
+        net = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_m', pretrained=True)
+        net.blocks[5] = torch.nn.Identity()
+        in_channels = 192
     # TemPr_h
-    if ('TEMPR' in name.upper()):
+    elif ('TEMPR' in name.upper()):
         net = TemPr_h(depth=samplers, return_acts=True, pool=pool, **kwargs)
-
+        in_channels = None
     # Swin-B (ssv2)
     elif "SWIN" in name.upper():
         net = get_swin_ssv2(**kwargs)
-    # Multi-Temporal net
-    elif "MTNET" in name.upper():
-        if "MTNET_XS" in name.upper():
-            if "G8" in name.upper():
-                net = MTNet_xs_g8(**kwargs, return_acts=True)
-            else:
-                net = MTNet_s(**kwargs, return_acts=True)
-        elif "MTNET_S" in name.upper():
-            if "G8" in name.upper():
-                net = MTNet_s_g8(**kwargs, return_acts=True)
-            else:
-                net = MTNet_s(**kwargs, return_acts=True)
-        elif "MTNET_M" in name.upper():
-            if "G8" in name.upper():
-                net = MTNet_m_g8(**kwargs, return_acts=True)
-            else:
-                net = MTNet_m(**kwargs, return_acts=True)
-        elif "MTNET_L" in name.upper():
-            if "G8" in name.upper():
-                net = MTNet_l_g8(**kwargs, return_acts=True)
-            else:
-                net = MTNet_l(**kwargs, return_acts=True)
-        elif "MTNET_XL" in name.upper():
-            net = MTNet_l(**kwargs, return_acts=True)
-        elif "MTNET_XXL" in name.upper():
-            net = MTNet_xxl(**kwargs, return_acts=True)
-        else:
-            net = MTNet_m(**kwargs, return_acts=True)
+        in_channels = 192
     # Res_net 3D
     elif "R3D" in name.upper():
+        in_channels = 512
         if "R3D_18" in name.upper():
             net = r3d_18(**kwargs, return_acts=True)
         elif "R3D_34" in name.upper():
@@ -126,39 +114,13 @@ def get_symbol(name, samplers, pool=None, headless=False, **kwargs):
             net = r3d_200(**kwargs, return_acts=True)
         elif "R3DXT50" in name.upper():
             net = r3dxt50_32x4d(**kwargs, return_acts=True)
-        elif "R3DXT101" in name.upper():
+        else:
             net = r3dxt101_32x8d(**kwargs, return_acts=True)
-        elif "WIDE_R3D50" in name.upper():
-            net = wide_r3d50_2(**kwargs, return_acts=True)
-        else:
-            net = wide_r3d101_2(**kwargs, return_acts=True)
-    # Res_net (2+1)D
-    elif "R2PLUS1D" in name.upper():
-        if "R2PLUS1D_18" in name.upper():
-            net = r2plus1d_18(**kwargs, return_acts=True)
-        elif "R2PLUS1D_34" in name.upper():
-            net = r2plus1d_34(**kwargs, return_acts=True)
-        elif "R2PLUS1D_50" in name.upper():
-            net = r2plus1d_50(**kwargs, return_acts=True)
-        elif "R2PLUS1D_101" in name.upper():
-            net = r2plus1d_101(**kwargs, return_acts=True)
-        elif "R2PLUS1D_152" in name.upper():
-            net = r2plus1d_152(**kwargs, return_acts=True)
-        elif "R2PLUS1D_200" in name.upper():
-            net = r2plus1d_200(**kwargs, return_acts=True)
-        elif "R2PLUS1DXT50" in name.upper():
-            net = r2plus1dxt50_32x4d(**kwargs, return_acts=True)
-        elif "R2PLUS1DXT101" in name.upper():
-            net = r2plus1dxt101_32x8d(**kwargs, return_acts=True)
-        elif "WIDE_R2PLUS1D50" in name.upper():
-            net = wide_r2plus1d50_2(**kwargs, return_acts=True)
-        else:
-            net = wide_r2plus1d101_2(**kwargs, return_acts=True)
     else:
         logging.error("network '{}'' not implemented".format(name))
         raise NotImplementedError()
 
-    return net
+    return (net, in_channels)
 '''
 ---  E N D  O F  F U N C T I O N  G E T _ S Y M B O L ---
 '''
@@ -249,6 +211,7 @@ class Contiguous(torch.nn.Module):
         - forward: Function for operation calling.
 '''
 class Combined(torch.nn.Module):
+    
     def __init__(self,
                  backbone,
                  head=None,
@@ -262,9 +225,10 @@ class Combined(torch.nn.Module):
         assert num_samplers >= 1, 'Cannot create model with `num_samplers` being less than 1!'
         self.samplers = num_samplers
         self.precision = precision
+        self.has_head = head is not None
 
         # Get backbone model, input configuration, head model and pooling method
-        self.backbone = get_symbol(backbone, samplers=self.samplers, headless =True, **kwargs)
+        self.backbone, in_channels = get_symbol(backbone, samplers=self.samplers, headless =True, **kwargs)
         self.backbone.requires_grad_(False)
 
         self.rarrange = torch.nn.Sequential(
@@ -282,7 +246,10 @@ class Combined(torch.nn.Module):
             self.pred_fusion = None
 
         if head!='none' and head is not None:
-            self.head = get_symbol(head, samplers=self.samplers, **kwargs)
+            self.backbone.requires_grad_(False)
+            self.head,_ = get_symbol(head, samplers=self.samplers, input_channels=in_channels, **kwargs)
+        else:
+            self.fc = torch.nn.Linear(in_channels,kwargs['num_classes'])
 
         # model printing
         converted = []
@@ -299,20 +266,20 @@ class Combined(torch.nn.Module):
         # Assume x of shape [B S C T H W] and reshape to [BxS C T H W]
         B, _, _, _, _, _ = x.shape
         x = rearrange(x, 'b s c t h w -> (b s) c t h w')
-        with torch.no_grad():
+        with torch.set_grad_enabled(self.has_head):
             with torch.cuda.amp.autocast():
-                pred, x = self.backbone(x)
+                x = self.backbone(x)
             if self.precision=='fp32':
-                pred = pred.float()
+                #pred = pred.float()
                 x = x.float()
         # feature pooling
         _, _, t, _, _ = x.shape
         x = F.adaptive_avg_pool3d(x, (t,4,4))
+        
 
         # Rearrange features to [B S C' t 4 4] and predictions [B S C]
         x = rearrange(x, '(b s) c t h w -> b c s t h w',b=B)
-        pred = rearrange(pred, '(b s) c -> b s c',b=B)
-
+        #pred = rearrange(pred, '(b s) c -> b s c',b=B)
 
         if hasattr(self, 'head'):
             # if self.precision=='mixed':
@@ -326,6 +293,9 @@ class Combined(torch.nn.Module):
                 return (pred, preds)
             else:
                 return self.rarrange(pred)
+        else:
+            x = reduce(x, 'b c s t h w -> b 1 c','mean')
+            pred = self.fc(x)
 
         return (pred.squeeze(1), pred)
 
@@ -338,12 +308,28 @@ class Combined(torch.nn.Module):
 
 if __name__ == "__main__":
 
-    net = Combined(backbone='swin',
+    net = Combined(backbone='x3d',
                    head='TemPr_h',
-                   pool='avg',
+                   pool='ada',
                    print_net=False,
                    num_samplers=4,
                    t_dim=16).cuda()
-    tmp = torch.rand([1, 4, 3, 16, 186, 186]).cuda()
+    
+    tmp = torch.rand([32, 4, 3, 16, 224, 224]).cuda()
     out = net(tmp)
     print('Exited sucessfully',out[0].shape)
+
+    runs = []
+    for i in range(0, 1000):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            out = net(tmp)
+        end.record()
+        torch.cuda.synchronize()
+        time = start.elapsed_time(end)
+        runs.append(time)
+        print(i, 'elapsed time: ', time, end='\r')
+    print('Avg elapsed time:',sum(runs)/len(runs))
+

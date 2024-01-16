@@ -64,14 +64,14 @@ We have tested our code over the following datasets:
 - **EPIC-KITCHENS-100** : [[link]](https://epic-kitchens.github.io/2023)
 - **NTU-RGB** : [[link]](https://rose1.ntu.edu.sg/dataset/actionRecognition/)
 
-#### Conversion of videos to SQLite3
+#### Videos and image-based datasets
 
-Instead of extracting video frames stored as image files (`.png`/`.jpeg`/etc.) that dramatically increase the number of _inodes_ use, we use `.db` files for each video and store frames as BLOBS.
+Based on the format that the dataset is stored on disk two options are supported by the repo:
+- Videos being stored in video files (e.g. `.mp4`,`.avi`,etc.)
+- Videos being stored in folders containing their frames in image files (e.g. `.jpg`)
 
-You can use the `dataset2databse` pypi [package](https://pypi.org/project/dataset2database/) or [repo](https://github.com/alexandrosstergiou/dataset2database) to convert video files to SQL:
-```
-$ pip install dataset2database
-```
+By default it is assumed that the data are in video format however, you can overwrite this by setting the `use_frames` call argument to `True`/`true`.
+
 
 #### Data directory format
 
@@ -85,13 +85,16 @@ We assume a fixed directory formatting that should be of the following structure
         └─── <class_i>
         │     │
         │     │─── <video_id_j>
+        │     │         (for datasets w/ videos saved as frames)
         │     │         │
-        │     │         │─── frames.db
-        │     │         └─── n_frames
+        │     │         │─── frame1.jpg
+        │     │         └─── framen.jpg
         │     │    
         │     │─── <video_id_j+1>
+        │     │         (for datasets w/ videos saved as frames)
         │     │         │
-        │     │         │─── frames.db
+        │     │         │─── frame1.jpg
+        │     │         └─── framen.jpg
        ...   ...
 ```
 
@@ -104,9 +107,10 @@ You can also use the argument parsers in `train.py` and `inference.py` for custo
 
 #### Examples
 
-Train on UCF-101 with observation ratio 0.3, 3 scales and over 4 gpus:
+Train on UCF-101 with observation ratio 0.3, 3 scales, with movinet backbone, with the pretrained UCF-101 backbone checkpoint stored in `weights`, and over 4 gpus:
 ```
-python train.py --config config/UCF-101/latents_256/conf.yml --video_per 0.3 --num_samplers 3 --gpus 0 1 2 3
+python train.py --video_per 0.3 --num_samplers 3 --gpus 0 1 2 3 --precision mixed --dataset UCF-101 --frame_size 224 --batch_size 64 --data_dir data/UCF-101/ --label_dir /labels/UCF-101 --workers 16 --backbone movinet --end_epoch 70 --pretrained_dir weights/UCF-101/movinet_ada_best.pth
+
 ```
 
 Run inference over something-something v2 with TemPr and adaptive ensemble over a single gpu with checkpoint file `my_chckpt.pth`:
@@ -127,12 +131,32 @@ The following arguments are used and can be included at the parser of any traini
 | `clip-length` | Integer determining the number of frames to be used for each video. |
 | `clip-size` | Tuple for the spatial size (height x width) of each frame.|
 | `backbone`| String for the name of the feature extractor network.|
+|`accum_grads`| Integer for the number of iterations passed to run backwards. Set to 1 to not use gradient accumulation. |
+|`use_frames`| Boolean flag. When set to `True` the dataset directory should be a folder of `.jpg` images. Alternatively, video files. |
 | `head`| String for the name of the attention tower network. Only `TemPr_h` can be currently used.|
 | `pool` | String for the predictor aggregation method to be used. |
 | `gpus` | List for the number of GPUs to be used. |
 | `pretrained-3d`| String for `.pth` filepath the case that the weights are to be initialised from some previously trained model. As a non-strict weight loading implementation exists to remove certain works from the `state_dict` keys.|
 |`config`| String for the `.yaml` configuration file to be used. If arguments that are part of the configuration path are passed by the user, they will be selected over the YAML ones.|
 
+
+## Checkpoints
+
+
+
+
+### UCF-101
+
+|Backbone | $\rho=0.1$| $\rho=0.2$| $\rho=0.3$| $\rho=0.4$| $\rho=0.5$| $\rho=0.6$| $\rho=0.7$| $\rho=0.8$| $\rho=0.9$|
+| :--------------: | :-------: | :-------: | :-------: | :-------: | :-------: | :-------: | :-------: | :-------: | :-------: |
+| `x3d` | [`chkp`](https://drive.google.com/file/d/12gYiOjLBgeEI-XVPVz4wCFNN7PWRXKbD/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1rjSgig7Al7NQXA6j-v6Cs2YLfyhU9v-D/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1qACMBrw-rGjTcQni_zxrawDipUCUUrmn/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1jg0Zmv41ak7mo9Ay0YYV5sHSqZegLyrh/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1rPOlOokVIPp5Absj8GweUCmHnmlgqRt7/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1S0k6zsdPdKNxDggvI0W9cr6bt8vLjTc2/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1lfLXsbX0Iw1uW_jfBnAtO8IC7ozdahdf/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/15_UFp3fouXH_dj2HPSN8Xhek9C9dX9Eo/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1vOlt_ufN6vZj9p-227hALuVtGnfCkz3L/view?usp=sharing) |
+| `movinet` | [`chkp`](https://drive.google.com/file/d/171OCDnXu6jyHmTPsYWCDaB5UDv8F7aKV/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1jqhx-jfLgbesyRjDw4BGLOO5fgSDrzmw/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/12IEDxnZ8WS1f0eoN_CnEMYq1Lig4uZ8J/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1XwzPxWngwI44aVQAOYjmjJVkLiH2yVXe/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1o0mrVxdn_E62nKq3Xgj34_o3aw4Pvas2/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1DovSWihJYMea-FICEh65tS6ln6H81g9w/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1I7FmfauszDmlOZuscBiBsS-r2hLtFTHx/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1D3R3XFtapQe8z0dTLf-0A5C2mr4CcTiA/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1hn5qHo_fQ671o0_VfjL1uOS9YYHgSnXl/view?usp=sharing) |
+
+### SSsub21
+
+|Backbone | $\rho=0.1$| $\rho=0.2$| $\rho=0.3$| $\rho=0.5$| $\rho=0.7$| $\rho=0.9$|
+| :--------------: | :-------: | :-------: | :-------: | :-------: | :-------: | :-------: |
+| `movinet` | [`chkp`](https://drive.google.com/file/d/1Nv8TpM05WxehJYfNeHhrH-_eNKgP_tyE/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1MXKAyTfAcgVqHAABdsWwLluTcBEvkgRp/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1vYqmTEBIYrAH4omII7vA3ZtUjoqTb5F0/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1oxo5MknKnGf4c0Z2Pjl8wVbUduHf-BpQ/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1J-x4mm1re8ShtheEUXpcPY8MskBMRfgK/view?usp=sharing) | [`chkp`](https://drive.google.com/file/d/1I9Qtmuvj_zbJdNNTlfC5B8pITjlGbwNN/view?usp=sharing) |
 
 ## Citation
 

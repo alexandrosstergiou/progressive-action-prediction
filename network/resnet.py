@@ -505,7 +505,7 @@ class VideoResNet(nn.Module):
 
     def __init__(self, block, conv_makers, layers,
                  stem, num_classes=400, groups=1, width_per_group=64,
-                 zero_init_residual=False):
+                 zero_init_residual=False,**kwargs):
 
         super(VideoResNet, self).__init__()
         self.inplanes = 64
@@ -543,12 +543,12 @@ class VideoResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        x = self.avgpool(x)
+        x_pool = self.avgpool(x)
         # Flatten the layer to fc
-        x = x.flatten(1)
-        x = self.fc(x)
+        x_pool = x_pool.flatten(1)
+        pred = self.fc(x_pool)
 
-        return x
+        return pred, x
 
     def _make_layer(self, block, conv_builder, planes, blocks, stride=1):
         downsample = None

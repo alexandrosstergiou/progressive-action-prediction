@@ -98,7 +98,7 @@ class Attention(nn.Module):
     @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
     def stable_softmax(self,x):
         x = torch.nan_to_num(x)
-        x -= reduce(x, '... d -> ... 1', 'max')
+        x -= reduce(x.clone(), '... d -> ... 1', 'max')
         return x.softmax(dim = -1)
 
     def forward(self, x, context = None, mask = None):
@@ -136,7 +136,7 @@ class TemPr_h(nn.Module):
         num_freq_bands=10,
         depth,
         max_freq=10.,
-        input_channels = 512,
+        input_channels = 192,
         num_latents = 256,
         latent_dim = 512,
         cross_heads = 1,
@@ -236,7 +236,7 @@ class TemPr_h(nn.Module):
         if self.fourier_encode_data:
             # calculate fourier encoded positions in the range of [-1, 1], for all axis
             axis_pos = list(map(lambda size: torch.linspace(-1., 1., steps = size, device = device), axis)) # [T, H , W]
-            pos = torch.stack(torch.meshgrid(*axis_pos), dim = -1) # [T, H, W, 3]
+            pos = torch.stack(torch.meshgrid(*axis_pos,indexing='ij'), dim = -1) # [T, H, W, 3]
             enc_pos = fourier_encode(pos, self.max_freq, self.num_freq_bands)# [T, H, W, 3, (2 x num_bands)+1]
             enc_pos = rearrange(enc_pos, '... n d -> ... (n d)')# [T, H, W, 3 x ((2 x num_bands)+1)]
             enc_pos = repeat(enc_pos, '... -> s b ...', s = s, b = b)# [S, B, T, H, W, 3 x ((2 x num_bands)+1)]
