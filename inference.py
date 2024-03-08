@@ -30,15 +30,7 @@ from torch.optim import SGD, Adam, AdamW
 
 from decimal import Decimal
 
-datasets = [ 'mini-Kinetics',
-             'Kinetics-400',
-             'Kinetics-600',
-             'Kinetics-700',
-             'Moments-in-Time',
-             'HACS',
-             'ActivityNet-v1',
-             'ActivityNet-v2',
-             'NTU-RGB'
+datasets = [ 'NTU-RGB',
              'UCF-101',
              'HMDB-51',
              'smthng-smthng_coarse',
@@ -76,19 +68,20 @@ parser.add_argument('--precision', default='fp32', choices=['fp32','mixed'],
                     help="switch between single (fp32)/mixed (fp16) precision.")
 parser.add_argument('--frame_len', default=16,
                     help="define the (max) frame length of each input sample.")
-parser.add_argument('--frame_size', default=(224,224),
+parser.add_argument('--frame_size', default=(100,176),
                     help="define the (max) frame size of each input sample.")
-parser.add_argument('--frame_interval', type=int, default=[1,2],
+parser.add_argument('--frame_interval', default=[1,2], nargs='+',
                     help="define the sampling interval between frames.")
+
+
 
 # GPU-device related parser arguments
 parser.add_argument('--gpus', type=list, default=[0],
                     help="define gpu id(s).")
 
 # DL model parser arguments
-parser.add_argument('--pretrained_dir', type=str,  default=None,
-                    help="load pretrained model from path. This can be used for either the backbone or head alone or both. Leave empty when training from scratch.")
-
+parser.add_argument('--chkp', type=str,  default=None,
+                    help="load model from path.")
 parser.add_argument('--backbone', type=str, default='r3d_18',
                     help="chose the backbone architecture. See `network` dir for more info.")
 parser.add_argument('--head', type=str, default='Tempr_h',
@@ -98,7 +91,7 @@ parser.add_argument('--num_freq_bands', type=int, default = 10,
                     help="choose the number of freq bands, with original value (2 * K + 1)")
 parser.add_argument('--max_freq', type=float, default = 10.,
                     help="choose the maximum frequency number.")
-parser.add_argument('--num_latents', type=int, default = 512,
+parser.add_argument('--num_latents', type=int, default = 256,
                     help="choose number of latents/induced set points/centroids (following terminology from the Perceiver/Set Transformer papers).")
 parser.add_argument('--latent_dim', type=int, default = 512,
                     help="latent dimension size.")
@@ -116,8 +109,10 @@ parser.add_argument('--ff_dropout', type=float, default = 0.,
                     help='dropout probability for the feed-forward sub-net.')
 parser.add_argument('--weight_tie_layers', type=bool, default = False,
                     help="whether to weight tie layers (optional).")
+parser.add_argument('--use_frames', default=False, type=lambda x: (str(x).lower() == 'true'),
+                    help='flag for using folders with jpg images.')
 
-parser.add_argument('--pool', type=str, default='avg', choices=['max','avg','em','edscw','idw','ada'],
+parser.add_argument('--pool', type=str, default='ada', choices=['max','avg','em','edscw','idw','ada'],
                     help='choice of pooling method to use for selection/fusion of frame features.')
 
 parser.add_argument('--workers', type=int, default=8,
@@ -180,6 +175,7 @@ if __name__ == "__main__":
         opt = yaml.load(open(args.config), Loader=yaml.FullLoader)
         # overwrite arguments based on YAML options
         vars(args).update(opt)
+    args = autofill(args, parser)
 
 
     # Use file logger + console output (for servers and real-time feedback)
@@ -192,22 +188,29 @@ if __name__ == "__main__":
     logger.addHandler(fh)
 
 
-    logging.info("Using pytorch version {} ({})".format(torch.__version__, torch.__path__))
-    logging.info("Start training with args:\n" + json.dumps(vars(args), indent=4, sort_keys=True))
-    # Set device states
-    logging.info('CUDA availability: '+str(torch.cuda.is_available()))
+    # handle strings in argparse lists
+    args.gpus = [int(i) for i in args.gpus]
+    args.frame_interval = [int(i) for i in args.frame_interval]
 
     # must set visible devices BEFORE importing torch
-    args.gpus = [int(i) for i in args.gpus]
     if (len(args.gpus) == 1):
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus[0])
     else:
         os.environ["CUDA_VISIBLE_DEVICES"] = ''.join(str(id)+',' for id in args.gpus)[:-1]
-
     logging.info('CUDA_VISIBLE_DEVICES set to '+os.environ["CUDA_VISIBLE_DEVICES"])
+
+    
+
+    logging.info("Using pytorch version {} ({})".format(torch.__version__, torch.__path__))
+    logging.info("Start training with args:\n" + json.dumps(vars(args), indent=4, sort_keys=True))
+    # Set device states
+    logging.info('CUDA availability: '+str(torch.cuda.is_available()))
     assert torch.cuda.is_available(), "CUDA is not available. CUDA devices are required from this repo!"
     torch.manual_seed(args.random_seed)
     torch.cuda.manual_seed(args.random_seed)
+    
+    if args.head.lower() == 'none':
+        args.head = None
 
     clip_length = int(args.frame_len)
     clip_size = args.frame_size
@@ -253,6 +256,8 @@ if __name__ == "__main__":
         results_path = os.path.join(args.json_dir,args.dataset,latents,samplers,ratio,args.head+'_'+args.backbone+'_'+args.pool)
     else:
         results_path = os.path.join(args.json_dir,args.dataset,latents,samplers,ratio,args.backbone+'_'+args.pool)
+    if not os.path.exists(results_path):
+        os.makedirs(results_path)
 
     # data iterator - randomisation based on date and time values
     iter_seed = torch.initial_seed() + 100
@@ -269,7 +274,7 @@ if __name__ == "__main__":
     print()
 
     # Create custom loaders for train and validation
-    eval_loader = iterator_factory.create(
+    eval_data, eval_length = iterator_factory.create(
         return_train=False,
         return_video_path=True,
         data_dir=args.data_dir ,
@@ -294,7 +299,8 @@ if __name__ == "__main__":
     net.net = torch.nn.DataParallel(net.net, device_ids=[gpu_id for gpu_id in (args.gpus)])
 
     # checkpoint loading
-    _, _ = net.load_checkpoint(path=args.pretrained_dir, strict=True)
+    net.net.load_state_dict(torch.load(args.chkp)['state_dict'])
+
 
 
     # define evaluation metric
@@ -307,7 +313,7 @@ if __name__ == "__main__":
                                               metric.Accuracy(name="top5", topk=5)) for _ in range(args.num_samplers)]
 
     # Main training happens here
-    net.inference(eval_iter=eval_loader,
+    net.inference(eval_iter=eval_data,
                   save_directory=results_path,
                   workers=args.workers,
                   metrics=metrics,

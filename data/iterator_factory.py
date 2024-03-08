@@ -11,6 +11,7 @@ from . import video_sampler as sampler
 
 
 import pytorchvideo
+from pytorchvideo import transforms as pyT
 import torchvision
 
 '''
@@ -112,13 +113,13 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                               sampler=train_sampler,
                               video_size=(clip_length,clip_size[0],clip_size[1]),
                               video_transform = torchvision.transforms.Compose([
-                                  pytorchvideo.transforms.Div255(),
-                                  pytorchvideo.transforms.Normalize(mean, std),
-                                  pytorchvideo.transforms.ShortSideScale(clip_size[0]),
-                                  torchvision.transforms.Resize((clip_size[0],clip_size[1])),
-                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  pyT.Div255(),
+                                  pyT.Normalize(mean, std),
+                                  pyT.ShortSideScale(clip_size[0]),
+                                  torchvision.transforms.Resize((clip_size[0],clip_size[1]),antialias=True),
+                                  pyT.Permute([1,0,2,3]),
                                   torchvision.transforms.GaussianBlur(sigma=[0.1, 2.0], kernel_size=5),
-                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  pyT.Permute([1,0,2,3]),
                                   torchvision.transforms.RandomHorizontalFlip(p=0.5),
                                   torchvision.transforms.Lambda(flexible_pad)
                                   ]),
@@ -136,13 +137,13 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                               sampler=train_sampler,
                               video_size=(clip_length,clip_size[0],clip_size[1]),
                               video_transform = torchvision.transforms.Compose([
-                                  pytorchvideo.transforms.Div255(),
-                                  pytorchvideo.transforms.Normalize(mean, std),
-                                  pytorchvideo.transforms.RandomShortSideScale(min_size=256, max_size=320),
+                                  pyT.Div255(),
+                                  pyT.Normalize(mean, std),
+                                  pyT.RandomShortSideScale(min_size=256, max_size=320),
                                   torchvision.transforms.RandomCrop(244),
-                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  pyT.Permute([1,0,2,3]),
                                   torchvision.transforms.GaussianBlur(sigma=[0.1, 2.0], kernel_size=5),
-                                  pytorchvideo.transforms.Permute([1,0,2,3]),
+                                  pyT.Permute([1,0,2,3]),
                                   torchvision.transforms.RandomHorizontalFlip(p=0.5)
                                       ]),
                               name='train',
@@ -168,10 +169,10 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                         sampler=val_sampler,
                         video_size=(clip_length,clip_size[0],clip_size[1]),
                         video_transform=torchvision.transforms.Compose([
-                                  pytorchvideo.transforms.Div255(),
-                                  pytorchvideo.transforms.Normalize(mean, std),
-                                  pytorchvideo.transforms.ShortSideScale(clip_size[0]),
-                                  torchvision.transforms.Resize((clip_size[0],clip_size[1])),
+                                  pyT.Div255(),
+                                  pyT.Normalize(mean, std),
+                                  pyT.ShortSideScale(clip_size[0]),
+                                  torchvision.transforms.Resize((clip_size[0],clip_size[1]),antialias=True),
                                   torchvision.transforms.Lambda(flexible_pad)
                                       ]),
                          name='val',
@@ -186,9 +187,9 @@ def get_data(data_dir=os.path.join('data','UCF-101'),
                         sampler=val_sampler,
                         video_size=(16,256,256),
                         video_transform=torchvision.transforms.Compose([
-                                  pytorchvideo.transforms.Div255(),
-                                  pytorchvideo.transforms.Normalize(mean, std),
-                                  pytorchvideo.transforms.ShortSideScale(256),
+                                  pyT.Div255(),
+                                  pyT.Normalize(mean, std),
+                                  pyT.ShortSideScale(256),
                                   torchvision.transforms.CenterCrop(256),
                                       ]),
                          name='val',
@@ -219,10 +220,7 @@ def create(return_train=True, **kwargs):
 
     if not return_train:
         val = get_data(eval_only=True,**kwargs)
-        val_loader = torch.utils.data.DataLoader(val,
-            batch_size=kwargs['batch_size'], shuffle=False,
-            num_workers=kwargs['num_workers'], pin_memory=False)
-        return val,val_loader,val.__len__()
+        return val,val.__len__()
 
     dataset_iter = get_data(**kwargs)
     train,val = dataset_iter

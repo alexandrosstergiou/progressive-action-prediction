@@ -662,8 +662,10 @@ class model(static_model):
                 val_top1_sum['samp_'+str(k)] = []
                 val_top5_sum['samp_'+str(k)] = []
                 val_loss_sum['samp_'+str(k)] = []
-
-            for i_batch, (data, target, path) in enumerate(eval_iter):
+            
+            val_loader = torch.utils.data.DataLoader(eval_iter,batch_size=1, shuffle=False,num_workers=10, pin_memory=False,drop_last=True)
+            
+            for i_batch,(data, target, path)  in enumerate(val_loader):
 
                 label = path[0].split('/')[-2]
 
@@ -745,7 +747,7 @@ class model(static_model):
                         else:
                             accurac_dict[label]['samp_'+str(s)]['FP'] = {path[0].split('/')[-1] : {str(fp_label) : float(prob) for (fp_label,prob) in zip(fp_labels,probs)}}
 
-                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.4f} | {:.4f}]".format(i_batch,len(eval_iter.dataset),label, m[1][0][1], sum(val_top1_sum['cl'])/(i_batch + 1))
+                line = "Video:: {:d}/{:d} videos, `{}` top-1 acc: [{:.4f} | {:.4f}]".format(i_batch,len(val_loader.dataset),label, m[1][0][1], sum(val_top1_sum['cl'])/(i_batch + 1))
                 print(' '*(len(line)+20), end='\r')
                 print(line, end='\r')
 
